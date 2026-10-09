@@ -1,4 +1,5 @@
 export * from "./constants";
+export * from "./playerName";
 export * from "./protocol";
 export * from "./schema/GameState";
 export * from "./input/MoveInput";

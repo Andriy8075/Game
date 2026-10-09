@@ -13,12 +13,119 @@
         height: 100%;
         overflow: hidden;
         background: #1b2416;
+      }
+
+      body {
+        font-family: "Segoe UI", sans-serif;
+      }
+
+      body.in-game,
+      body.in-game #game {
         cursor: crosshair;
+      }
+
+      #menu[hidden],
+      #game[hidden] {
+        display: none !important;
+      }
+
+      #menu {
+        min-height: 100%;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(circle at top, rgba(129, 199, 132, 0.18), transparent 42%),
+          #1b2416;
+      }
+
+      .menu-card {
+        width: min(420px, calc(100% - 32px));
+        padding: 32px 28px 28px;
+        background: #12180f;
+        border: 1px solid #3e5230;
+        border-radius: 16px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4);
+        color: #f5f5f5;
+      }
+
+      .menu-card h1 {
+        margin: 0 0 8px;
+        font-size: 32px;
+        letter-spacing: 0.03em;
+      }
+
+      .menu-card p {
+        margin: 0 0 24px;
+        color: #dce7d4;
+        line-height: 1.4;
+      }
+
+      .menu-card label {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 14px;
+        color: #c8e6c9;
+      }
+
+      .menu-card input {
+        box-sizing: border-box;
+        width: 100%;
+        padding: 12px 14px;
+        border-radius: 8px;
+        border: 1px solid #4e623c;
+        background: #1b2416;
+        color: #f7f3ea;
+        font: inherit;
+        font-size: 16px;
+      }
+
+      .menu-card input:focus {
+        outline: 2px solid #81c784;
+        border-color: #81c784;
+      }
+
+      .menu-card input::placeholder {
+        color: #9aab90;
+      }
+
+      .menu-card button {
+        margin-top: 18px;
+        width: 100%;
+        padding: 12px 16px;
+        border: 0;
+        border-radius: 8px;
+        background: #66bb6a;
+        color: #102016;
+        font: inherit;
+        font-size: 16px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .menu-card button:hover {
+        background: #81c784;
       }
     </style>
   </head>
   <body>
-    <div id="game"></div>
+    <div id="menu">
+      <form id="menu-form" class="menu-card">
+        <h1>.io Shooter</h1>
+        <p>Enter a name, then press play to join the match.</p>
+        <label for="player-name">Name</label>
+        <input
+          id="player-name"
+          name="playerName"
+          type="text"
+          maxlength="16"
+          autocomplete="nickname"
+          autofocus
+          required
+        />
+        <button id="play-button" type="submit">Play</button>
+      </form>
+    </div>
+    <div id="game" hidden></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

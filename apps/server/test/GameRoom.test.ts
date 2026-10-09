@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { boot, type ColyseusTestServer } from "@colyseus/testing";
-import { GAME_ROOM_NAME, MoveInput, PLAYER_RADIUS, getObstacle } from "@io-game/shared";
+import { DEFAULT_PLAYER_NAME, GAME_ROOM_NAME, MoveInput, PLAYER_RADIUS, getObstacle } from "@io-game/shared";
 import { createGameServer } from "../src/app.config";
 import type { GameState } from "../src/rooms/schema/GameState";
 
@@ -31,6 +31,23 @@ describe("GameRoom", () => {
     expect(client.sessionId).toBeTruthy();
     expect(room.state.players.has(client.sessionId)).toBe(true);
     expect(client.state.players.has(client.sessionId)).toBe(true);
+    expect(room.state.players.get(client.sessionId)?.name).toBe(DEFAULT_PLAYER_NAME);
+  });
+
+  it("stores the menu name on the player", async () => {
+    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const client = await colyseus.connectTo(room, { name: "  Nova  " });
+    const player = room.state.players.get(client.sessionId);
+
+    expect(player?.name).toBe("Nova");
+  });
+
+  it("rejects a blank menu name", async () => {
+    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const client = await colyseus.connectTo(room, { name: "   \n  " });
+    const player = room.state.players.get(client.sessionId);
+
+    expect(player?.name).toBe(DEFAULT_PLAYER_NAME);
   });
 
   it("removes a player when they leave", async () => {

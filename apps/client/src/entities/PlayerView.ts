@@ -5,9 +5,10 @@ export class PlayerView {
   readonly root: Phaser.GameObjects.Container;
   private readonly body: Phaser.GameObjects.Container;
   private readonly hpFill: Phaser.GameObjects.Rectangle;
+  private readonly nameLabel: Phaser.GameObjects.Text;
   private readonly hpWidth = 40;
 
-  constructor(scene: Phaser.Scene, color: number, x: number, y: number) {
+  constructor(scene: Phaser.Scene, color: number, x: number, y: number, name: string) {
     const torso = scene.add.circle(0, 0, PLAYER_RADIUS, color);
     torso.setStrokeStyle(3, 0x102027, 0.9);
 
@@ -24,8 +25,25 @@ export class PlayerView {
     this.hpFill = scene.add.rectangle(-this.hpWidth / 2, -PLAYER_RADIUS - 14, this.hpWidth, 6, 0x66bb6a);
     this.hpFill.setOrigin(0, 0.5);
 
-    this.root = scene.add.container(x, y, [this.body, hpBg, this.hpFill]);
+    this.nameLabel = scene.add
+      .text(0, -PLAYER_RADIUS - 22, name, {
+        fontFamily: "Segoe UI, sans-serif",
+        fontSize: "14px",
+        color: "#f7f3ea",
+        stroke: "#102027",
+        strokeThickness: 4,
+        align: "center",
+      })
+      .setOrigin(0.5, 1);
+
+    this.root = scene.add.container(x, y, [this.body, hpBg, this.hpFill, this.nameLabel]);
     this.root.setDepth(10);
+  }
+
+  setName(name: string): void {
+    if (this.nameLabel.text !== name) {
+      this.nameLabel.setText(name);
+    }
   }
 
   setPose(x: number, y: number, angle: number): void {

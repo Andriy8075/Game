@@ -10,6 +10,8 @@ export const PLAYER_RADIUS = 18;
 export const PLAYER_SPEED = 180;
 export const PLAYER_MAX_HP = 100;
 export const PLAYER_DAMAGE = 20;
+export const PLAYER_NAME_MAX_LENGTH = 16;
+export const DEFAULT_PLAYER_NAME = "Player";
 
 export const FIRE_COOLDOWN_MS = 250;
 export const WEAPON_RANGE = 720;

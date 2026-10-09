@@ -5,6 +5,9 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
   },
+  optimizeDeps: {
+    exclude: ["@io-game/shared"],
+  },
   build: {
     assetsInlineLimit: 0,
     rollupOptions: {
