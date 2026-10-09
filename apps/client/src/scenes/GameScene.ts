@@ -1,9 +1,11 @@
 import { Callbacks, Predict } from "@colyseus/sdk";
 import Phaser from "phaser";
 import {
+  DEFAULT_PLAYER_NAME,
   INTERP_DELAY_MS,
   MoveInput,
   applyMovement,
+  sanitizePlayerName,
   type ShotEvent,
 } from "@io-game/shared";
 import { PlayerView } from "../entities/PlayerView";
@@ -15,6 +17,7 @@ type SyncedPlayer = {
   y: number;
   angle: number;
   color: number;
+  name: string;
   hp: number;
   maxHp: number;
   damage: number;
@@ -38,6 +41,7 @@ export class GameScene extends Phaser.Scene {
   private keys?: KeyMap;
   private statusText?: Phaser.GameObjects.Text;
   private hpText?: Phaser.GameObjects.Text;
+  private playerName = DEFAULT_PLAYER_NAME;
   private pendingFire = false;
   private readonly views = new Map<string, PlayerView>();
 
@@ -46,6 +50,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.playerName = sanitizePlayerName(this.registry.get("playerName"));
     drawWorld(this);
     this.keys = this.input.keyboard!.addKeys({
       W: Phaser.Input.Keyboard.KeyCodes.W,
@@ -136,6 +141,7 @@ export class GameScene extends Phaser.Scene {
       const angle = sessionId === this.room.sessionId ? aim : player.angle;
       view.setPose(x, y, angle);
       view.setHealth(player.hp, player.maxHp);
+      view.setName(sanitizePlayerName(player.name));
 
       if (sessionId === this.room.sessionId) {
         this.cameras.main.centerOn(x, y);
@@ -146,7 +152,7 @@ export class GameScene extends Phaser.Scene {
 
   private async connect(): Promise<void> {
     try {
-      this.room = await connectToGame();
+      this.room = await connectToGame(this.playerName);
       this.setStatus("Connected");
       this.bindRoom(this.room);
     } catch (error) {
@@ -212,7 +218,7 @@ export class GameScene extends Phaser.Scene {
     if (this.views.has(sessionId)) {
       return;
     }
-    const view = new PlayerView(this, player.color, player.x, player.y);
+    const view = new PlayerView(this, player.color, player.x, player.y, sanitizePlayerName(player.name));
     view.setHealth(player.hp, player.maxHp);
     this.views.set(sessionId, view);
   }

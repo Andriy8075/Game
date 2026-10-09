@@ -13,7 +13,9 @@ import {
   clampAxis,
   muzzleOrigin,
   pickSpawn,
+  sanitizePlayerName,
   wrapAngle,
+  type JoinOptions,
   type ShotEvent,
 } from "@io-game/shared";
 import { GameState, Player } from "./schema/GameState";
@@ -63,7 +65,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     this.setFixedTimestep((ctx) => this.step(ctx), TICK_RATE);
   }
 
-  onJoin(client: Client): void {
+  onJoin(client: Client, options?: JoinOptions): void {
     const occupied = [...this.state.players.values()].map((player) => ({ x: player.x, y: player.y }));
     const spawn = pickSpawn(occupied);
     const player = new Player();
@@ -71,6 +73,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     player.y = spawn.y;
     player.angle = 0;
     player.color = PLAYER_COLORS[this.colorIndex % PLAYER_COLORS.length]!;
+    player.name = sanitizePlayerName(options?.name);
     player.hp = PLAYER_MAX_HP;
     player.maxHp = PLAYER_MAX_HP;
     this.colorIndex += 1;

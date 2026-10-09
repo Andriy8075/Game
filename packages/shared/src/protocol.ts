@@ -1,3 +1,7 @@
+export type JoinOptions = {
+  name?: string;
+};
+
 export type ShotEvent = {
   shooterId: string;
   fromX: number;
