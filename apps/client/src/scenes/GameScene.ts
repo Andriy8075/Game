@@ -160,7 +160,7 @@ export class GameScene extends Phaser.Scene {
       view.setPose(x, y, angle);
       view.setHealth(player.hp, player.maxHp);
       const weapon = getWeapon(player.weaponId);
-      view.setWeapon(weapon.color);
+      view.setWeapon(player.weaponId);
 
       if (sessionId === this.room.sessionId) {
         this.cameras.main.centerOn(x, y);
@@ -259,7 +259,7 @@ export class GameScene extends Phaser.Scene {
     if (this.views.has(sessionId)) {
       return;
     }
-    const view = new PlayerView(this, player.color, player.x, player.y);
+    const view = new PlayerView(this, player.color, player.x, player.y, player.weaponId);
     view.setHealth(player.hp, player.maxHp);
     this.views.set(sessionId, view);
   }

@@ -1,16 +1,22 @@
 import Phaser from "phaser";
-import { PICKUP_RADIUS, getWeapon } from "@io-game/shared";
+import { getWeapon } from "@io-game/shared";
+import { paintWeapon, weaponShape, weaponWidth } from "./weaponShape";
 
 export class PickupView {
   readonly root: Phaser.GameObjects.Container;
 
   constructor(scene: Phaser.Scene, weaponId: string, x: number, y: number) {
     const weapon = getWeapon(weaponId);
-    const glow = scene.add.circle(0, 0, PICKUP_RADIUS + 8, weapon.color, 0.28);
-    const core = scene.add.circle(0, 0, PICKUP_RADIUS * 0.55, weapon.color);
-    core.setStrokeStyle(2, 0x102027, 0.9);
+    const shape = weaponShape(weapon.id);
+    const width = weaponWidth(shape);
+
+    const glow = scene.add.ellipse(0, 2, width + 22, 46, weapon.color, 0.22);
+    const shadow = scene.add.ellipse(0, 12, width * 0.72, 8, 0x10200c, 0.28);
+    const graphic = scene.add.graphics();
+    paintWeapon(graphic, shape, weapon.color, -width / 2, 2);
+
     const label = scene.add
-      .text(0, -(PICKUP_RADIUS + 10), weapon.name, {
+      .text(0, -28, weapon.name, {
         fontFamily: "Segoe UI, sans-serif",
         fontSize: "13px",
         color: "#f7f7f2",
@@ -19,13 +25,13 @@ export class PickupView {
       })
       .setOrigin(0.5, 1);
 
-    this.root = scene.add.container(x, y, [glow, core, label]);
+    this.root = scene.add.container(x, y, [shadow, glow, graphic, label]);
     this.root.setDepth(6);
 
     scene.tweens.add({
       targets: glow,
-      scale: 1.35,
-      alpha: 0.08,
+      scale: 1.12,
+      alpha: 0.1,
       duration: 800,
       yoyo: true,
       repeat: -1,
