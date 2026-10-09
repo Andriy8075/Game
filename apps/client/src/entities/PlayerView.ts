@@ -4,6 +4,8 @@ import { PLAYER_RADIUS } from "@io-game/shared";
 export class PlayerView {
   readonly root: Phaser.GameObjects.Container;
   private readonly body: Phaser.GameObjects.Container;
+  private readonly gun: Phaser.GameObjects.Rectangle;
+  private readonly barrel: Phaser.GameObjects.Rectangle;
   private readonly hpFill: Phaser.GameObjects.Rectangle;
   private readonly hpWidth = 40;
 
@@ -15,10 +17,10 @@ export class PlayerView {
     const leftHand = scene.add.circle(11, 12, 5, 0xffcc80);
     const rightHand = scene.add.circle(18, 5, 5, 0xffcc80);
     const stock = scene.add.rectangle(20, 2, 10, 7, 0x4e342e);
-    const gun = scene.add.rectangle(30, 2, 20, 6, 0x263238);
-    const barrel = scene.add.rectangle(42, 2, 10, 3, 0x90a4ae);
+    this.gun = scene.add.rectangle(30, 2, 20, 6, 0xfff59d);
+    this.barrel = scene.add.rectangle(42, 2, 10, 3, 0x90a4ae);
 
-    this.body = scene.add.container(0, 0, [torso, visor, leftHand, stock, gun, barrel, rightHand]);
+    this.body = scene.add.container(0, 0, [torso, visor, leftHand, stock, this.gun, this.barrel, rightHand]);
 
     const hpBg = scene.add.rectangle(0, -PLAYER_RADIUS - 14, this.hpWidth, 6, 0x111111);
     this.hpFill = scene.add.rectangle(-this.hpWidth / 2, -PLAYER_RADIUS - 14, this.hpWidth, 6, 0x66bb6a);
@@ -31,6 +33,11 @@ export class PlayerView {
   setPose(x: number, y: number, angle: number): void {
     this.root.setPosition(x, y);
     this.body.setRotation(angle);
+  }
+
+  setWeapon(color: number): void {
+    this.gun.setFillStyle(color);
+    this.barrel.setFillStyle(color);
   }
 
   setHealth(hp: number, maxHp: number): void {

@@ -1,1 +1,1 @@
-export { GameState, Player } from "@io-game/shared";
+export { GameState, Player, WeaponPickup } from "@io-game/shared";

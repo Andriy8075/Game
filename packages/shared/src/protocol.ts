@@ -5,4 +5,5 @@ export type ShotEvent = {
   toX: number;
   toY: number;
   hitId?: string;
+  weaponId: string;
 };
