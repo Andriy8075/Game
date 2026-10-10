@@ -9,7 +9,13 @@ export function getServerUrl(): string {
   return import.meta.env.VITE_COLYSEUS_URL ?? DEFAULT_SERVER_URL;
 }
 
+let gameClient: Client | undefined;
+
+export function getGameClient(): Client {
+  gameClient ??= new Client(getServerUrl());
+  return gameClient;
+}
+
 export async function connectToGame(name: string): Promise<GameRoom> {
-  const client = new Client(getServerUrl());
-  return client.joinOrCreate(GAME_ROOM_NAME, { name: sanitizePlayerName(name) }, GameState);
+  return getGameClient().joinOrCreate(GAME_ROOM_NAME, { name: sanitizePlayerName(name) }, GameState);
 }

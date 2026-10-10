@@ -105,25 +105,94 @@
       .menu-card button:hover {
         background: #81c784;
       }
+
+      .menu-card h2 {
+        margin: 18px 0 8px;
+        font-size: 20px;
+      }
+
+      .account-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .account-actions button {
+        flex: 1;
+        margin-top: 10px;
+      }
+
+      .menu-card button.secondary {
+        background: transparent;
+        color: #c8e6c9;
+        border: 1px solid #4e623c;
+        font-weight: 600;
+      }
+
+      .menu-card button.secondary:hover {
+        background: #24321c;
+      }
+
+      #account-status {
+        margin: 0 0 16px;
+        color: #c8e6c9;
+      }
+
+      .auth-error {
+        margin: 12px 0 0;
+        color: #ffab91;
+      }
+
+      #auth-form[hidden],
+      #logout-button[hidden],
+      #account-status[hidden],
+      .auth-error[hidden] {
+        display: none !important;
+      }
     </style>
   </head>
   <body>
     <div id="menu">
-      <form id="menu-form" class="menu-card">
-        <h1>.io Shooter</h1>
-        <p>Enter a name, then press play to join the match.</p>
-        <label for="player-name">Name</label>
-        <input
-          id="player-name"
-          name="playerName"
-          type="text"
-          maxlength="16"
-          autocomplete="nickname"
-          autofocus
-          required
-        />
-        <button id="play-button" type="submit">Play</button>
-      </form>
+      <div class="menu-card">
+        <form id="menu-form">
+          <h1>.io Shooter</h1>
+          <p id="menu-intro">Enter a name, then press play to join the match.</p>
+          <p id="account-status" hidden></p>
+          <label for="player-name">Name</label>
+          <input
+            id="player-name"
+            name="playerName"
+            type="text"
+            maxlength="16"
+            autocomplete="nickname"
+            autofocus
+            required
+          />
+          <button id="play-button" type="submit">Play</button>
+          <div class="account-actions">
+            <button id="show-signup" class="secondary" type="button">Sign up</button>
+            <button id="show-login" class="secondary" type="button">Log in</button>
+            <button id="logout-button" class="secondary" type="button" hidden>Log out</button>
+          </div>
+        </form>
+        <form id="auth-form" hidden>
+          <h2 id="auth-title">Sign up</h2>
+          <label for="auth-email">Email</label>
+          <input id="auth-email" name="email" type="email" autocomplete="email" required />
+          <label for="auth-password">Password</label>
+          <input
+            id="auth-password"
+            name="password"
+            type="password"
+            minlength="6"
+            autocomplete="new-password"
+            required
+          />
+          <button id="auth-submit" type="submit">Create account</button>
+          <button id="google-button" class="secondary" type="button">Continue with Google</button>
+          <button id="auth-back" class="secondary" type="button">Back</button>
+          <p id="auth-error" class="auth-error" hidden></p>
+        </form>
+      </div>
     </div>
     <div id="game" hidden></div>
     <script type="module" src="/src/main.ts"></script>

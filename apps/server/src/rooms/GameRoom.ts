@@ -1,4 +1,5 @@
-import { Client, ClientState, Room } from "@colyseus/core";
+import { Client, ClientState, Room, type AuthContext } from "@colyseus/core";
+import { JWT, type JwtPayload } from "colyseus";
 import {
   FIRE_COOLDOWN_MS,
   GAME_MAP,
@@ -18,6 +19,7 @@ import {
   type JoinOptions,
   type ShotEvent,
 } from "@io-game/shared";
+import { findAccountById } from "../accounts/store";
 import { GameState, Player } from "./schema/GameState";
 
 type StepContext = {
@@ -59,6 +61,27 @@ export class GameRoom extends Room<{ input: MoveInput }> {
 
   private lastFireAt = new Map<string, number>();
   private colorIndex = 0;
+
+  async onAuth(_client: Client, _options: unknown, context: AuthContext) {
+    if (!context.token) {
+      return true;
+    }
+
+    try {
+      const payload = await JWT.verify<JwtPayload>(context.token);
+      const id = typeof payload === "object" && payload !== null && "id" in payload ? payload.id : undefined;
+      if (typeof id !== "string") {
+        throw new Error("invalid_token");
+      }
+      const account = await findAccountById(id);
+      if (!account) {
+        throw new Error("invalid_token");
+      }
+      return { id: account.id, email: account.email, level: account.level };
+    } catch {
+      throw new Error("invalid_token");
+    }
+  }
 
   onCreate(): void {
     this.rewind.attachAll(this.state.players, { fields: ["x", "y"] });
