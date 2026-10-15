@@ -10,7 +10,7 @@ export const PICKUP_SLOTS: ReadonlyArray<{ x: number; y: number }> = [
   { x: 400, y: 700 },
   { x: 1240, y: 640 },
   { x: 1880, y: 360 },
-  { x: 2520, y: 980 },
+  { x: 2680, y: 1100 },
   { x: 980, y: 1960 },
 ];
 

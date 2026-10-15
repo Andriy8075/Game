@@ -18,6 +18,27 @@ export const FIRE_COOLDOWN_MS = 250;
 export const WEAPON_RANGE = 720;
 export const MUZZLE_OFFSET = PLAYER_RADIUS + 6;
 
+export const GATHER_REACH = 36;
+export const GATHER_COOLDOWN_MS = 420;
+
+export const BANDAGE_HEAL = 40;
+export const LIGHT_ARMOR = 40;
+export const HEAVY_ARMOR = 80;
+
+export const THROW_COOLDOWN_MS = 600;
+export const GRENADE_SPEED = 420;
+export const GRENADE_FUSE_MS = 850;
+export const GRENADE_RADIUS = 8;
+export const FRAG_DAMAGE = 45;
+export const FRAG_RADIUS = 120;
+export const FLASH_RADIUS = 140;
+export const FLASH_SLOW_MS = 1800;
+export const SLOW_SPEED_FACTOR = 0.45;
+export const FIRE_RADIUS = 90;
+export const FIRE_TTL_MS = 2800;
+export const FIRE_TICK_MS = 400;
+export const FIRE_DAMAGE = 8;
+
 export const PLAYER_COLORS = [
   0x4fc3f7,
   0xff8a65,

@@ -11,3 +11,4 @@ export * from "./simulation/spawns";
 export * from "./world/map";
 export * from "./weapons/catalog";
 export * from "./weapons/pickups";
+export * from "./gameplay/economy";

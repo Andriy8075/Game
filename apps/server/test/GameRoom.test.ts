@@ -1,10 +1,15 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { boot, type ColyseusTestServer } from "@colyseus/testing";
+import { ColyseusTestServer } from "@colyseus/testing";
 import {
   DEFAULT_PLAYER_NAME,
   GAME_ROOM_NAME,
+  HARVEST,
+  HEAVY_ARMOR,
+  LIGHT_ARMOR,
   MoveInput,
   PICKUP_SLOTS,
+  PLAYER_DAMAGE,
+  PLAYER_MAX_HP,
   PLAYER_RADIUS,
   STARTER_WEAPON_ID,
   getObstacle,
@@ -18,12 +23,12 @@ describe("GameRoom", () => {
   let colyseus: ColyseusTestServer;
 
   beforeAll(async () => {
-    colyseus = await boot(
-      createGameServer({
-        greet: false,
-        gracefullyShutdown: false,
-      }),
-    );
+    const gameServer = createGameServer({
+      greet: false,
+      gracefullyShutdown: false,
+    });
+    await gameServer.listen(2598);
+    colyseus = new ColyseusTestServer(gameServer);
   });
 
   afterAll(async () => {
@@ -240,6 +245,167 @@ describe("GameRoom", () => {
     expect(target.hp).toBe(startHp - sidearm.damage * 2);
   });
 
+  it("gathers wood from a nearby tree and ignores far nodes", async () => {
+    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const client = await colyseus.connectTo(room);
+    const player = room.state.players.get(client.sessionId);
+    const tree = getObstacle("tree-1");
+    if (!player || !tree || tree.kind !== "tree") {
+      throw new Error("missing player or tree");
+    }
+
+    expect(room.state.nodes.get("iron-1")?.remaining).toBe(HARVEST.iron.charges);
+    expect(room.state.nodes.get("gold-1")?.remaining).toBe(HARVEST.gold.charges);
+
+    player.x = 1600;
+    player.y = 2200;
+    sendGather(client);
+    await waitTicks(room, 3);
+    expect(player.inventory.wood).toBe(0);
+
+    player.x = tree.x;
+    player.y = tree.y + tree.radius + PLAYER_RADIUS + 8;
+    sendGather(client);
+    await waitTicks(room, 3);
+    expect(player.inventory.wood).toBe(0);
+
+    sendMessage(client, "hold", "arm");
+    await waitTicks(room, 2);
+    expect(player.held).toBe("arm");
+    sendGather(client);
+    await waitTicks(room, 3);
+
+    expect(player.inventory.wood).toBe(1);
+    expect(room.state.nodes.get("tree-1")?.remaining).toBe(HARVEST.tree.charges - 1);
+  });
+
+  it("crafts a bandage from wood and heals with it", async () => {
+    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const client = await colyseus.connectTo(room);
+    const player = room.state.players.get(client.sessionId);
+    if (!player) {
+      throw new Error("missing player");
+    }
+
+    player.inventory.wood = 1;
+    player.hp = 40;
+    sendMessage(client, "craft", "bandage");
+    await waitTicks(room, 2);
+    expect(player.inventory.bandage).toBe(0);
+
+    player.inventory.wood = 2;
+    sendMessage(client, "craft", "bandage");
+    await waitTicks(room, 2);
+    expect(player.inventory.wood).toBe(0);
+    expect(player.inventory.bandage).toBe(1);
+
+    sendMessage(client, "use", "bandage");
+    await waitTicks(room, 2);
+    expect(player.hp).toBe(80);
+    expect(player.inventory.bandage).toBe(0);
+  });
+
+  it("equips armor that absorbs bullet damage", async () => {
+    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const shooterClient = await colyseus.connectTo(room);
+    const targetClient = await colyseus.connectTo(room);
+    const shooter = room.state.players.get(shooterClient.sessionId);
+    const target = room.state.players.get(targetClient.sessionId);
+    if (!shooter || !target) {
+      throw new Error("missing players");
+    }
+
+    target.inventory.iron = 3;
+    target.inventory.stone = 2;
+    sendMessage(targetClient, "craft", "lightArmor");
+    await waitTicks(room, 2);
+    expect(target.armor).toBe(LIGHT_ARMOR);
+    expect(target.craftedLight).toBe(true);
+    expect(target.inventory.lightArmor).toBe(0);
+
+    shooter.x = 220;
+    shooter.y = 2200;
+    shooter.angle = 0;
+    target.x = 480;
+    target.y = 2200;
+
+    sendShot(shooterClient, 0);
+    await waitTicks(room, 4);
+
+    expect(target.hp).toBe(PLAYER_MAX_HP);
+    expect(target.armor).toBe(LIGHT_ARMOR - PLAYER_DAMAGE);
+  });
+
+  it("upgrades light armor to heavy and refuses another light craft", async () => {
+    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const client = await colyseus.connectTo(room);
+    const player = room.state.players.get(client.sessionId);
+    if (!player) {
+      throw new Error("missing player");
+    }
+
+    player.inventory.iron = 7;
+    player.inventory.stone = 2;
+    player.inventory.gold = 2;
+    sendMessage(client, "craft", "lightArmor");
+    await waitTicks(room, 2);
+    expect(player.armor).toBe(LIGHT_ARMOR);
+    expect(player.craftedLight).toBe(true);
+
+    sendMessage(client, "craft", "heavyArmor");
+    await waitTicks(room, 2);
+    expect(player.armor).toBe(HEAVY_ARMOR);
+    expect(player.maxArmor).toBe(HEAVY_ARMOR);
+    expect(player.craftedHeavy).toBe(true);
+    expect(player.inventory.iron).toBe(0);
+    expect(player.inventory.gold).toBe(0);
+
+    player.inventory.iron = 3;
+    player.inventory.stone = 2;
+    sendMessage(client, "craft", "lightArmor");
+    await waitTicks(room, 2);
+    expect(player.inventory.iron).toBe(3);
+    expect(player.inventory.stone).toBe(2);
+    expect(player.armor).toBe(HEAVY_ARMOR);
+
+    sendMessage(client, "craft", "heavyArmor");
+    await waitTicks(room, 2);
+    expect(player.inventory.iron).toBe(3);
+    expect(player.armor).toBe(HEAVY_ARMOR);
+  });
+
+  it("throws a frag grenade that damages a player in the blast", async () => {
+    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const shooterClient = await colyseus.connectTo(room);
+    const targetClient = await colyseus.connectTo(room);
+    const shooter = room.state.players.get(shooterClient.sessionId);
+    const target = room.state.players.get(targetClient.sessionId);
+    if (!shooter || !target) {
+      throw new Error("missing players");
+    }
+
+    shooter.x = 200;
+    shooter.y = 2200;
+    shooter.angle = 0;
+    shooter.inventory.frag = 1;
+    target.x = 560;
+    target.y = 2200;
+    const startHp = target.hp;
+
+    sendMessage(shooterClient, "hold", "frag");
+    await waitTicks(room, 2);
+    expect(shooter.held).toBe("frag");
+    expect(shooter.inventory.frag).toBe(1);
+    expect(room.state.grenades.size).toBe(0);
+
+    sendMessage(shooterClient, "throw", "frag");
+    await waitTicks(room, 40);
+
+    expect(shooter.inventory.frag).toBe(0);
+    expect(target.hp).toBeLessThan(startHp);
+    expect(shooter.hp).toBe(PLAYER_MAX_HP);
+  });
+
   it("serves a health endpoint", async () => {
     const response = await colyseus.http.get("/health");
     expect(response.data).toEqual({ ok: true });
@@ -253,9 +419,11 @@ type InputClient = {
       moveY: number;
       aimAngle: number;
       fire: boolean;
+      gather: boolean;
     };
     send: () => void;
   };
+  send: (type: string, payload?: unknown) => void;
 };
 
 function sendMove(client: InputClient, moveX: number, moveY: number): void {
@@ -264,7 +432,22 @@ function sendMove(client: InputClient, moveX: number, moveY: number): void {
   input.data.moveY = moveY as -1 | 0 | 1;
   input.data.aimAngle = 0;
   input.data.fire = false;
+  input.data.gather = false;
   input.send();
+}
+
+function sendGather(client: InputClient): void {
+  const input = client.input({ type: MoveInput });
+  input.data.moveX = 0;
+  input.data.moveY = 0;
+  input.data.aimAngle = 0;
+  input.data.fire = false;
+  input.data.gather = true;
+  input.send();
+}
+
+function sendMessage(client: InputClient, type: string, payload: unknown): void {
+  client.send(type, payload);
 }
 
 function sendShot(client: InputClient, aimAngle: number): void {
@@ -273,6 +456,7 @@ function sendShot(client: InputClient, aimAngle: number): void {
   input.data.moveY = 0;
   input.data.aimAngle = aimAngle;
   input.data.fire = true;
+  input.data.gather = false;
   input.send();
 }
 

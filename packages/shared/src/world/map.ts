@@ -11,9 +11,11 @@ export type RectObstacle = {
   stroke: number;
 };
 
+export type HarvestKind = "tree" | "stone" | "iron" | "gold";
+
 export type CircleObstacle = {
   id: string;
-  kind: "tree" | "stone";
+  kind: HarvestKind;
   x: number;
   y: number;
   radius: number;
@@ -72,12 +74,26 @@ const STONES: CircleObstacle[] = [
   { id: "stone-6", kind: "stone", x: 720, y: 2040, radius: 21, fill: 0xbdbdbd, stroke: 0x757575 },
 ];
 
+const IRON: CircleObstacle[] = [
+  { id: "iron-1", kind: "iron", x: 460, y: 1100, radius: 24, fill: 0xb87333, stroke: 0x6d4c41 },
+  { id: "iron-2", kind: "iron", x: 1760, y: 360, radius: 24, fill: 0xc17f4a, stroke: 0x5d4037 },
+  { id: "iron-3", kind: "iron", x: 2100, y: 2100, radius: 24, fill: 0xb87333, stroke: 0x6d4c41 },
+  { id: "iron-4", kind: "iron", x: 2500, y: 980, radius: 22, fill: 0xa1887f, stroke: 0x4e342e },
+];
+
+const GOLD: CircleObstacle[] = [
+  { id: "gold-1", kind: "gold", x: 300, y: 1560, radius: 20, fill: 0xffd54f, stroke: 0xf9a825 },
+  { id: "gold-2", kind: "gold", x: 1320, y: 640, radius: 20, fill: 0xffe082, stroke: 0xffb300 },
+  { id: "gold-3", kind: "gold", x: 2700, y: 1700, radius: 22, fill: 0xffd54f, stroke: 0xf9a825 },
+  { id: "gold-4", kind: "gold", x: 1500, y: 1200, radius: 18, fill: 0xffe082, stroke: 0xffb300 },
+];
+
 export const GAME_MAP: GameMap = {
   width: WORLD_WIDTH,
   height: WORLD_HEIGHT,
   ground: 0x4c7a3e,
   backdrop: 0x1b2416,
-  obstacles: [...BUILDINGS, ...FENCES, ...TREES, ...STONES],
+  obstacles: [...BUILDINGS, ...FENCES, ...TREES, ...STONES, ...IRON, ...GOLD],
   spawns: [
     { x: 240, y: 240 },
     { x: 2960, y: 240 },
@@ -95,7 +111,11 @@ export function isRectObstacle(obstacle: Obstacle): obstacle is RectObstacle {
 }
 
 export function isCircleObstacle(obstacle: Obstacle): obstacle is CircleObstacle {
-  return obstacle.kind === "tree" || obstacle.kind === "stone";
+  return obstacle.kind === "tree" || obstacle.kind === "stone" || obstacle.kind === "iron" || obstacle.kind === "gold";
+}
+
+export function isHarvestable(obstacle: Obstacle): obstacle is CircleObstacle {
+  return isCircleObstacle(obstacle);
 }
 
 export function getObstacle(id: string): Obstacle | undefined {

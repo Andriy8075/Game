@@ -11,3 +11,18 @@ export type ShotEvent = {
   hitId?: string;
   weaponId: string;
 };
+
+export type GatherEvent = {
+  playerId: string;
+  x: number;
+  y: number;
+  resource: string;
+  amount: number;
+};
+
+export type BlastEvent = {
+  x: number;
+  y: number;
+  radius: number;
+  kind: number;
+};

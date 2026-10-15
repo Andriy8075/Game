@@ -1,7 +1,24 @@
 import { Client, ClientState, Room, type AuthContext } from "@colyseus/core";
 import { JWT, type JwtPayload } from "colyseus";
 import {
+  BANDAGE_HEAL,
+  FIRE_DAMAGE,
+  FIRE_RADIUS,
+  FIRE_TICK_MS,
+  FIRE_TTL_MS,
+  FLASH_RADIUS,
+  FLASH_SLOW_MS,
+  FRAG_DAMAGE,
+  FRAG_RADIUS,
   GAME_MAP,
+  GATHER_COOLDOWN_MS,
+  GRENADE_FUSE_MS,
+  GRENADE_KIND,
+  GRENADE_RADIUS,
+  GRENADE_SPEED,
+  HARVEST,
+  HEAVY_ARMOR,
+  LIGHT_ARMOR,
   MAX_CLIENTS,
   MoveInput,
   PICKUP_RESPAWN_MS,
@@ -9,29 +26,48 @@ import {
   PLAYER_COLORS,
   PLAYER_MAX_HP,
   PLAYER_RADIUS,
+  PLAYER_SPEED,
+  SLOW_SPEED_FACTOR,
   STARTER_WEAPON_ID,
+  THROW_COOLDOWN_MS,
   TICK_RATE,
+  armorCraftBlock,
+  applyDamage,
   applyMovement,
+  blastDamage,
+  canAfford,
   castHitscan,
   clampAxis,
+  formatCost,
+  getRecipe,
   getWeapon,
+  isHarvestable,
+  isHeldSlot,
   muzzleOrigin,
+  nearestHarvestable,
   overlapsPickup,
+  payCost,
   pickSpawn,
   randomPickupWeapon,
   sanitizePlayerName,
   wrapAngle,
+  type BlastEvent,
+  type CraftedId,
+  type GatherEvent,
   type JoinOptions,
   type ShotEvent,
 } from "@io-game/shared";
 import { findAccountById } from "../accounts/store";
-import { GameState, Player, WeaponPickup } from "./schema/GameState";
+import { GameState, HazardZone, Inventory, NodeState, Player, ThrownGrenade, WeaponPickup } from "./schema/GameState";
 
 type StepContext = {
   dt: number;
   dtMs: number;
   tick: number;
 };
+
+const USE_IDS = new Set(["bandage"]);
+const THROW_IDS = new Set<CraftedId>(["frag", "flash", "incendiary"]);
 
 export class GameRoom extends Room<{ input: MoveInput }> {
   maxClients = MAX_CLIENTS;
@@ -44,6 +80,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       frame.moveY = clampAxis(frame.moveY);
       frame.aimAngle = wrapAngle(frame.aimAngle);
       frame.fire = Boolean(frame.fire);
+      frame.gather = Boolean(frame.gather);
     },
     idle: ({ latest, sessionId }) => {
       const client = this.clients.get(sessionId);
@@ -58,6 +95,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
         moveY: latest.moveY,
         aimAngle: latest.aimAngle,
         fire: false,
+        gather: false,
       };
     },
   });
@@ -65,6 +103,12 @@ export class GameRoom extends Room<{ input: MoveInput }> {
   rewind = this.allowRewindState({ maxRewindMs: 500 });
 
   private lastFireAt = new Map<string, number>();
+  private lastGatherAt = new Map<string, number>();
+  private lastThrowAt = new Map<string, number>();
+  private nodeRespawnAt = new Map<string, number>();
+  private hazardTickAt = new Map<string, number>();
+  private grenadeSeq = 1;
+  private hazardSeq = 1;
   private colorIndex = 0;
   private pickupSerial = 0;
   private readonly slotByPickupId = new Map<string, number>();
@@ -93,6 +137,43 @@ export class GameRoom extends Room<{ input: MoveInput }> {
   }
 
   onCreate(): void {
+    for (const obstacle of GAME_MAP.obstacles) {
+      if (!isHarvestable(obstacle)) {
+        continue;
+      }
+      const node = new NodeState();
+      node.remaining = HARVEST[obstacle.kind].charges;
+      this.state.nodes.set(obstacle.id, node);
+    }
+
+    this.onMessage("craft", (client, payload: unknown) => {
+      if (typeof payload !== "string") {
+        return;
+      }
+      this.tryCraft(client.sessionId, payload);
+    });
+    this.onMessage("use", (client, payload: unknown) => {
+      if (typeof payload !== "string") {
+        return;
+      }
+      this.tryUse(client.sessionId, payload);
+    });
+    this.onMessage("hold", (client, payload: unknown) => {
+      if (typeof payload !== "string" || !isHeldSlot(payload)) {
+        return;
+      }
+      const player = this.state.players.get(client.sessionId);
+      if (player) {
+        player.held = payload;
+      }
+    });
+    this.onMessage("throw", (client, payload: unknown) => {
+      if (typeof payload !== "string") {
+        return;
+      }
+      this.tryThrow(client.sessionId, payload, Date.now());
+    });
+
     this.rewind.attachAll(this.state.players, { fields: ["x", "y"] });
     for (let slot = 0; slot < PICKUP_SLOTS.length; slot += 1) {
       this.spawnPickup(slot);
@@ -114,6 +195,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     player.maxHp = PLAYER_MAX_HP;
     player.weaponId = starter.id;
     player.damage = starter.damage;
+    player.inventory = new Inventory();
     this.colorIndex += 1;
     this.state.players.set(client.sessionId, player);
   }
@@ -121,23 +203,294 @@ export class GameRoom extends Room<{ input: MoveInput }> {
   onLeave(client: Client): void {
     this.state.players.delete(client.sessionId);
     this.lastFireAt.delete(client.sessionId);
+    this.lastGatherAt.delete(client.sessionId);
+    this.lastThrowAt.delete(client.sessionId);
   }
 
   private step(ctx: StepContext): void {
     const now = ctx.tick * ctx.dtMs;
     this.spawnDuePickups(now);
+    this.respawnNodes(now);
+    this.stepGrenades(ctx.dt, ctx.dtMs);
+    this.stepHazards(now, ctx.dtMs);
 
     for (const [sessionId, player] of this.state.players) {
+      if (player.slowMs > 0) {
+        player.slowMs = Math.max(0, player.slowMs - ctx.dtMs);
+      }
+
       const channel = this.inputs.get(sessionId);
       const command = channel.next();
       if (command) {
-        applyMovement(player, command, ctx.dt);
-        if (command.fire && !channel.wasIdle) {
+        const speed = player.slowMs > 0 ? PLAYER_SPEED * SLOW_SPEED_FACTOR : PLAYER_SPEED;
+        applyMovement(player, command, ctx.dt, GAME_MAP, PLAYER_RADIUS, speed);
+
+        if (command.gather && !channel.wasIdle && player.held === "arm") {
+          this.tryGather(sessionId, player, now);
+        }
+
+        if (command.fire && !channel.wasIdle && player.held === "gun") {
           this.tryFire(sessionId, player, now);
         }
       }
       this.collectPickups(player, now);
     }
+  }
+
+  private respawnNodes(now: number): void {
+    for (const [id, at] of this.nodeRespawnAt) {
+      if (now < at) {
+        continue;
+      }
+      const obstacle = GAME_MAP.obstacles.find((entry) => entry.id === id);
+      const node = this.state.nodes.get(id);
+      if (obstacle && isHarvestable(obstacle) && node) {
+        node.remaining = HARVEST[obstacle.kind].charges;
+      }
+      this.nodeRespawnAt.delete(id);
+    }
+  }
+
+  private tryGather(sessionId: string, player: Player, now: number): void {
+    const last = this.lastGatherAt.get(sessionId) ?? Number.NEGATIVE_INFINITY;
+    if (now - last < GATHER_COOLDOWN_MS) {
+      return;
+    }
+
+    const obstacle = nearestHarvestable(player.x, player.y, (id) => this.state.nodes.get(id)?.remaining ?? 0);
+    if (!obstacle) {
+      return;
+    }
+
+    const node = this.state.nodes.get(obstacle.id);
+    const spec = HARVEST[obstacle.kind];
+    if (!node || node.remaining <= 0) {
+      return;
+    }
+
+    node.remaining -= 1;
+    player.inventory[spec.resource] += spec.yield;
+    this.lastGatherAt.set(sessionId, now);
+    if (node.remaining <= 0) {
+      this.nodeRespawnAt.set(obstacle.id, now + spec.respawnMs);
+    }
+
+    const event: GatherEvent = {
+      playerId: sessionId,
+      x: obstacle.x,
+      y: obstacle.y,
+      resource: spec.label,
+      amount: spec.yield,
+    };
+    this.broadcast("gathered", event);
+  }
+
+  private tryCraft(sessionId: string, recipeId: string): void {
+    const player = this.state.players.get(sessionId);
+    const recipe = getRecipe(recipeId);
+    if (!player || !recipe) {
+      return;
+    }
+    if (recipe.id === "lightArmor" || recipe.id === "heavyArmor") {
+      const blocked = armorCraftBlock(recipe.id, player);
+      if (blocked) {
+        this.clients.get(sessionId)?.send("notice", blocked);
+        return;
+      }
+    }
+    if (!canAfford(player.inventory, recipe.cost)) {
+      this.clients.get(sessionId)?.send("notice", `Need ${formatCost(recipe.cost)}`);
+      return;
+    }
+
+    payCost(player.inventory, recipe.cost);
+    if (recipe.id === "lightArmor" || recipe.id === "heavyArmor") {
+      const points = recipe.id === "lightArmor" ? LIGHT_ARMOR : HEAVY_ARMOR;
+      player.armor = points;
+      player.maxArmor = points;
+      if (recipe.id === "lightArmor") {
+        player.craftedLight = true;
+      } else {
+        player.craftedHeavy = true;
+      }
+      this.clients.get(sessionId)?.send("notice", `${recipe.name} equipped`);
+      return;
+    }
+
+    player.inventory[recipe.id] += 1;
+    this.clients.get(sessionId)?.send("notice", `Crafted ${recipe.name}`);
+  }
+
+  private tryUse(sessionId: string, itemId: string): void {
+    const player = this.state.players.get(sessionId);
+    if (!player || !USE_IDS.has(itemId)) {
+      return;
+    }
+
+    if (itemId === "bandage") {
+      if (player.inventory.bandage <= 0) {
+        this.clients.get(sessionId)?.send("notice", "No bandages");
+        return;
+      }
+      if (player.hp >= player.maxHp) {
+        this.clients.get(sessionId)?.send("notice", "Already at full health");
+        return;
+      }
+      player.inventory.bandage -= 1;
+      player.hp = Math.min(player.maxHp, player.hp + BANDAGE_HEAL);
+      this.clients.get(sessionId)?.send("notice", `Healed ${BANDAGE_HEAL} HP`);
+    }
+  }
+
+  private tryThrow(sessionId: string, itemId: string, now: number): void {
+    const player = this.state.players.get(sessionId);
+    if (!player || !THROW_IDS.has(itemId as CraftedId)) {
+      return;
+    }
+    const kind = itemId as "frag" | "flash" | "incendiary";
+    if (player.held !== kind) {
+      return;
+    }
+    const last = this.lastThrowAt.get(sessionId) ?? Number.NEGATIVE_INFINITY;
+    if (now - last < THROW_COOLDOWN_MS) {
+      return;
+    }
+    if (player.inventory[kind] <= 0) {
+      this.clients.get(sessionId)?.send("notice", "None left");
+      return;
+    }
+
+    player.inventory[kind] -= 1;
+    this.lastThrowAt.set(sessionId, now);
+
+    const grenade = new ThrownGrenade();
+    grenade.x = player.x + Math.cos(player.angle) * (PLAYER_RADIUS + 10);
+    grenade.y = player.y + Math.sin(player.angle) * (PLAYER_RADIUS + 10);
+    grenade.vx = Math.cos(player.angle) * GRENADE_SPEED;
+    grenade.vy = Math.sin(player.angle) * GRENADE_SPEED;
+    grenade.kind = GRENADE_KIND[kind];
+    grenade.fuseMs = GRENADE_FUSE_MS;
+    grenade.ownerId = sessionId;
+    this.state.grenades.set(`g${this.grenadeSeq}`, grenade);
+    this.grenadeSeq += 1;
+  }
+
+  private stepGrenades(dt: number, dtMs: number): void {
+    for (const id of [...this.state.grenades.keys()]) {
+      const grenade = this.state.grenades.get(id);
+      if (!grenade) {
+        continue;
+      }
+
+      const nextX = grenade.x + grenade.vx * dt;
+      const nextY = grenade.y + grenade.vy * dt;
+      if (this.blocked(nextX, nextY)) {
+        grenade.vx = 0;
+        grenade.vy = 0;
+      } else {
+        grenade.x = nextX;
+        grenade.y = nextY;
+      }
+
+      grenade.fuseMs -= dtMs;
+      if (grenade.fuseMs <= 0) {
+        this.explode(grenade);
+        this.state.grenades.delete(id);
+      }
+    }
+  }
+
+  private blocked(x: number, y: number): boolean {
+    if (x < GRENADE_RADIUS || y < GRENADE_RADIUS || x > GAME_MAP.width - GRENADE_RADIUS || y > GAME_MAP.height - GRENADE_RADIUS) {
+      return true;
+    }
+    for (const obstacle of GAME_MAP.obstacles) {
+      if (obstacle.kind === "building" || obstacle.kind === "fence") {
+        const nearestX = Math.max(obstacle.x, Math.min(x, obstacle.x + obstacle.width));
+        const nearestY = Math.max(obstacle.y, Math.min(y, obstacle.y + obstacle.height));
+        const dx = x - nearestX;
+        const dy = y - nearestY;
+        if (dx * dx + dy * dy < GRENADE_RADIUS * GRENADE_RADIUS) {
+          return true;
+        }
+      } else if (isHarvestable(obstacle)) {
+        const dx = x - obstacle.x;
+        const dy = y - obstacle.y;
+        const reach = GRENADE_RADIUS + obstacle.radius;
+        if (dx * dx + dy * dy < reach * reach) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private explode(grenade: ThrownGrenade): void {
+    if (grenade.kind === GRENADE_KIND.frag) {
+      this.damageRadius(grenade.x, grenade.y, FRAG_RADIUS, FRAG_DAMAGE, true);
+      this.emitBlast(grenade.x, grenade.y, FRAG_RADIUS, grenade.kind);
+      return;
+    }
+
+    if (grenade.kind === GRENADE_KIND.flash) {
+      for (const player of this.state.players.values()) {
+        if (Math.hypot(player.x - grenade.x, player.y - grenade.y) <= FLASH_RADIUS) {
+          player.slowMs = Math.max(player.slowMs, FLASH_SLOW_MS);
+        }
+      }
+      this.emitBlast(grenade.x, grenade.y, FLASH_RADIUS, grenade.kind);
+      return;
+    }
+
+    const hazard = new HazardZone();
+    hazard.x = grenade.x;
+    hazard.y = grenade.y;
+    hazard.radius = FIRE_RADIUS;
+    hazard.kind = grenade.kind;
+    hazard.ttlMs = FIRE_TTL_MS;
+    const id = `h${this.hazardSeq}`;
+    this.hazardSeq += 1;
+    this.state.hazards.set(id, hazard);
+    this.emitBlast(grenade.x, grenade.y, FIRE_RADIUS, grenade.kind);
+  }
+
+  private stepHazards(now: number, dtMs: number): void {
+    for (const id of [...this.state.hazards.keys()]) {
+      const hazard = this.state.hazards.get(id);
+      if (!hazard) {
+        continue;
+      }
+
+      hazard.ttlMs -= dtMs;
+      const due = this.hazardTickAt.get(id) ?? 0;
+      if (now >= due) {
+        this.damageRadius(hazard.x, hazard.y, hazard.radius, FIRE_DAMAGE, false);
+        this.hazardTickAt.set(id, now + FIRE_TICK_MS);
+      }
+      if (hazard.ttlMs <= 0) {
+        this.state.hazards.delete(id);
+        this.hazardTickAt.delete(id);
+      }
+    }
+  }
+
+  private damageRadius(x: number, y: number, radius: number, damage: number, falloff: boolean): void {
+    for (const player of this.state.players.values()) {
+      const distance = Math.hypot(player.x - x, player.y - y);
+      const amount = falloff ? blastDamage(distance, radius, damage) : distance <= radius ? damage : 0;
+      if (amount <= 0) {
+        continue;
+      }
+      applyDamage(player, amount);
+      if (player.hp <= 0) {
+        this.respawn(player);
+      }
+    }
+  }
+
+  private emitBlast(x: number, y: number, radius: number, kind: number): void {
+    const event: BlastEvent = { x, y, radius, kind };
+    this.broadcast("blast", event);
   }
 
   private tryFire(sessionId: string, player: Player, now: number): void {
@@ -163,7 +516,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     if (result.kind === "player" && result.id) {
       const target = this.state.players.get(result.id);
       if (target) {
-        target.hp = Math.max(0, target.hp - weapon.damage);
+        applyDamage(target, weapon.damage);
         if (target.hp <= 0) {
           this.respawn(target);
         }
@@ -297,5 +650,16 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     player.x = spawn.x;
     player.y = spawn.y;
     player.hp = player.maxHp;
+    player.slowMs = 0;
+    if (player.craftedHeavy) {
+      player.maxArmor = HEAVY_ARMOR;
+      player.armor = HEAVY_ARMOR;
+    } else if (player.craftedLight) {
+      player.maxArmor = LIGHT_ARMOR;
+      player.armor = LIGHT_ARMOR;
+    } else {
+      player.armor = 0;
+      player.maxArmor = 0;
+    }
   }
 }

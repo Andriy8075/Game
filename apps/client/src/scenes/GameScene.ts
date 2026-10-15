@@ -2,18 +2,38 @@ import { Callbacks, Predict } from "@colyseus/sdk";
 import Phaser from "phaser";
 import {
   DEFAULT_PLAYER_NAME,
+  GAME_MAP,
+  HARVEST,
+  HELD_SLOTS,
   INTERP_DELAY_MS,
   MoveInput,
+  PLAYER_RADIUS,
+  PLAYER_SPEED,
+  SLOW_SPEED_FACTOR,
   applyMovement,
+  cycleHeld,
   formatWeaponStats,
   getWeapon,
+  isGrenadeSlot,
+  isHeldSlot,
+  nearestHarvestable,
   sanitizePlayerName,
+  type BlastEvent,
+  type GatherEvent,
+  type HeldSlot,
   type ShotEvent,
+  type StackCounts,
 } from "@io-game/shared";
+import { ActorsView } from "../entities/ActorsView";
 import { PickupView } from "../entities/PickupView";
 import { PlayerView } from "../entities/PlayerView";
 import { drawWorld } from "../entities/WorldView";
 import { connectToGame, type GameRoom } from "../network/GameClient";
+import { CraftMenu, type CraftAction } from "../ui/CraftMenu";
+import { Hud } from "../ui/Hud";
+import { WeaponMenu } from "../ui/WeaponMenu";
+
+type SyncedInventory = StackCounts;
 
 type SyncedPlayer = {
   x: number;
@@ -25,6 +45,13 @@ type SyncedPlayer = {
   maxHp: number;
   damage: number;
   weaponId: string;
+  armor: number;
+  maxArmor: number;
+  slowMs: number;
+  held: string;
+  craftedLight: boolean;
+  craftedHeavy: boolean;
+  inventory: SyncedInventory;
 };
 
 type SyncedPickup = {
@@ -42,6 +69,21 @@ type KeyMap = {
   LEFT: Phaser.Input.Keyboard.Key;
   DOWN: Phaser.Input.Keyboard.Key;
   RIGHT: Phaser.Input.Keyboard.Key;
+  C: Phaser.Input.Keyboard.Key;
+  H: Phaser.Input.Keyboard.Key;
+};
+
+const EMPTY_INVENTORY: StackCounts = {
+  wood: 0,
+  stone: 0,
+  iron: 0,
+  gold: 0,
+  frag: 0,
+  flash: 0,
+  incendiary: 0,
+  bandage: 0,
+  lightArmor: 0,
+  heavyArmor: 0,
 };
 
 export class GameScene extends Phaser.Scene {
@@ -49,11 +91,15 @@ export class GameScene extends Phaser.Scene {
   private predict?: ReturnType<typeof Predict.get>;
   private inputHandle?: ReturnType<GameRoom["input"]>;
   private keys?: KeyMap;
-  private statusText?: Phaser.GameObjects.Text;
-  private hpText?: Phaser.GameObjects.Text;
-  private weaponText?: Phaser.GameObjects.Text;
+  private hud!: Hud;
+  private weaponMenu!: WeaponMenu;
+  private craftMenu!: CraftMenu;
+  private slotKeys: Phaser.Input.Keyboard.Key[] = [];
+  private actors!: ActorsView;
+  private held: HeldSlot = "gun";
   private playerName = DEFAULT_PLAYER_NAME;
   private pendingFire = false;
+  private pendingGather = false;
   private readonly views = new Map<string, PlayerView>();
   private readonly pickups = new Map<string, PickupView>();
 
@@ -64,7 +110,12 @@ export class GameScene extends Phaser.Scene {
   create(): void {
     this.playerName = sanitizePlayerName(this.registry.get("playerName"));
     drawWorld(this);
-    this.keys = this.input.keyboard!.addKeys({
+    this.actors = new ActorsView(this);
+    this.hud = new Hud(this);
+    this.weaponMenu = new WeaponMenu(this);
+    this.craftMenu = new CraftMenu(this, (action) => this.sendAction(action));
+    const keyboard = this.input.keyboard!;
+    this.keys = keyboard.addKeys({
       W: Phaser.Input.Keyboard.KeyCodes.W,
       A: Phaser.Input.Keyboard.KeyCodes.A,
       S: Phaser.Input.Keyboard.KeyCodes.S,
@@ -73,56 +124,60 @@ export class GameScene extends Phaser.Scene {
       LEFT: Phaser.Input.Keyboard.KeyCodes.LEFT,
       DOWN: Phaser.Input.Keyboard.KeyCodes.DOWN,
       RIGHT: Phaser.Input.Keyboard.KeyCodes.RIGHT,
+      C: Phaser.Input.Keyboard.KeyCodes.C,
+      H: Phaser.Input.Keyboard.KeyCodes.H,
     }) as KeyMap;
+    const digitCodes = [
+      Phaser.Input.Keyboard.KeyCodes.ONE,
+      Phaser.Input.Keyboard.KeyCodes.TWO,
+      Phaser.Input.Keyboard.KeyCodes.THREE,
+      Phaser.Input.Keyboard.KeyCodes.FOUR,
+      Phaser.Input.Keyboard.KeyCodes.FIVE,
+      Phaser.Input.Keyboard.KeyCodes.SIX,
+      Phaser.Input.Keyboard.KeyCodes.SEVEN,
+      Phaser.Input.Keyboard.KeyCodes.EIGHT,
+      Phaser.Input.Keyboard.KeyCodes.NINE,
+      Phaser.Input.Keyboard.KeyCodes.NUMPAD_ONE,
+      Phaser.Input.Keyboard.KeyCodes.NUMPAD_TWO,
+      Phaser.Input.Keyboard.KeyCodes.NUMPAD_THREE,
+      Phaser.Input.Keyboard.KeyCodes.NUMPAD_FOUR,
+      Phaser.Input.Keyboard.KeyCodes.NUMPAD_FIVE,
+      Phaser.Input.Keyboard.KeyCodes.NUMPAD_SIX,
+      Phaser.Input.Keyboard.KeyCodes.NUMPAD_SEVEN,
+      Phaser.Input.Keyboard.KeyCodes.NUMPAD_EIGHT,
+      Phaser.Input.Keyboard.KeyCodes.NUMPAD_NINE,
+    ];
+    this.slotKeys = digitCodes.map((code) => keyboard.addKey(code));
 
-    this.statusText = this.add
-      .text(16, 16, "Connecting...", {
-        fontFamily: "Segoe UI, sans-serif",
-        fontSize: "16px",
-        color: "#f5f5f5",
-        backgroundColor: "#00000088",
-        padding: { x: 8, y: 6 },
-      })
-      .setScrollFactor(0)
-      .setDepth(1000);
-
-    this.add
-      .text(16, 52, "WASD / arrows to move. Mouse aims. Left click shoots. Walk over a weapon to pick it up.", {
-        fontFamily: "Segoe UI, sans-serif",
-        fontSize: "14px",
-        color: "#dce7d4",
-        backgroundColor: "#00000066",
-        padding: { x: 8, y: 6 },
-      })
-      .setScrollFactor(0)
-      .setDepth(1000);
-
-    this.hpText = this.add
-      .text(16, 88, "", {
-        fontFamily: "Segoe UI, sans-serif",
-        fontSize: "14px",
-        color: "#c8e6c9",
-        backgroundColor: "#00000066",
-        padding: { x: 8, y: 6 },
-      })
-      .setScrollFactor(0)
-      .setDepth(1000);
-
-    this.weaponText = this.add
-      .text(16, 124, "", {
-        fontFamily: "Segoe UI, sans-serif",
-        fontSize: "14px",
-        color: "#fff3c4",
-        backgroundColor: "#00000066",
-        padding: { x: 8, y: 6 },
-      })
-      .setScrollFactor(0)
-      .setDepth(1000);
+    this.scale.on("resize", (size: Phaser.Structs.Size) => {
+      this.hud.layout(size.width);
+      this.weaponMenu.layout(size.width, size.height);
+      this.craftMenu.layout(size.width, size.height);
+    });
 
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
-      if (pointer.leftButtonDown()) {
-        this.pendingFire = true;
+      if (this.hud.hitsCraftButton(pointer.x, pointer.y)) {
+        this.craftMenu.toggle();
+        return;
       }
+      const slot = this.weaponMenu.hitSlot(pointer.x, pointer.y);
+      if (slot) {
+        this.selectHeld(slot);
+        return;
+      }
+      if (this.craftMenu.handlePointer(pointer.x, pointer.y)) {
+        return;
+      }
+      if (pointer.leftButtonDown()) {
+        this.useHeld();
+      }
+    });
+
+    this.input.on("wheel", (_pointer: Phaser.Input.Pointer, _over: Phaser.GameObjects.GameObject[], _deltaX: number, deltaY: number) => {
+      if (deltaY === 0) {
+        return;
+      }
+      this.selectHeld(cycleHeld(this.held, deltaY > 0 ? 1 : -1));
     });
 
     void this.connect();
@@ -130,11 +185,15 @@ export class GameScene extends Phaser.Scene {
 
   update(time: number): void {
     if (!this.room || !this.predict || !this.inputHandle || !this.keys) {
+      this.actors.syncNodes(undefined);
       return;
     }
 
+    this.readHotkeys();
+
     const aim = this.readAim();
     const move = this.readMove();
+    const gather = this.held === "arm" && !this.craftMenu.isOpen() && (this.input.activePointer.leftButtonDown() || this.pendingGather);
     const steps = this.predict.tick(time);
 
     for (let i = 0; i < steps; i += 1) {
@@ -143,17 +202,29 @@ export class GameScene extends Phaser.Scene {
         moveY: number;
         aimAngle: number;
         fire: boolean;
+        gather: boolean;
       };
       data.moveX = move.x;
       data.moveY = move.y;
       data.aimAngle = aim;
       data.fire = this.pendingFire;
+      data.gather = gather;
       this.inputHandle.send();
       this.pendingFire = false;
+      this.pendingGather = false;
     }
 
-    const players = this.room.state.players as Map<string, SyncedPlayer>;
-    for (const [sessionId, player] of players) {
+    const state = this.room.state as {
+      players: Map<string, SyncedPlayer>;
+      nodes: Map<string, { remaining: number }>;
+      grenades: Map<string, { x: number; y: number; kind: number }>;
+      hazards: Map<string, { x: number; y: number; radius: number; kind: number }>;
+    };
+    this.actors.syncNodes(state.nodes);
+    this.actors.syncGrenades(state.grenades);
+    this.actors.syncHazards(state.hazards);
+
+    for (const [sessionId, player] of state.players) {
       const view = this.views.get(sessionId);
       if (!view) {
         continue;
@@ -165,25 +236,112 @@ export class GameScene extends Phaser.Scene {
       view.setPose(x, y, angle);
       view.setHealth(player.hp, player.maxHp);
       view.setName(sanitizePlayerName(player.name));
-      const weapon = getWeapon(player.weaponId);
       view.setWeapon(player.weaponId);
+      view.setArmor(player.armor, player.maxArmor);
+      view.setSlowed(player.slowMs > 0);
+      const syncedHeld = isHeldSlot(player.held) ? player.held : "gun";
+      view.setHeld(sessionId === this.room.sessionId ? this.held : syncedHeld);
 
       if (sessionId === this.room.sessionId) {
         this.cameras.main.centerOn(x, y);
-        this.hpText?.setText(`HP ${Math.ceil(player.hp)} / ${player.maxHp}`);
-        this.weaponText?.setText(formatWeaponStats(weapon));
+        const inventory = player.inventory ?? EMPTY_INVENTORY;
+        const weapon = getWeapon(player.weaponId);
+        this.hud.setHeld(this.held, this.held === "gun" ? formatWeaponStats(weapon) : "");
+        this.weaponMenu.setSelected(this.held);
+        this.weaponMenu.setArmor(
+          player.craftedHeavy ? "Heavy" : player.craftedLight ? "Light" : "None",
+          player.armor,
+          player.maxArmor,
+        );
+        this.hud.setVitals(player.hp, player.maxHp, player.armor, player.maxArmor, player.damage);
+        this.hud.setInventory(inventory);
+        this.craftMenu.refresh(inventory, {
+          craftedLight: player.craftedLight,
+          craftedHeavy: player.craftedHeavy,
+        });
+        const near = nearestHarvestable(x, y, (id) => state.nodes.get(id)?.remaining ?? 0);
+        const armKey = HELD_SLOTS.indexOf("arm") + 1;
+        this.hud.setPrompt(near
+          ? this.held === "arm"
+            ? `Click to gather ${HARVEST[near.kind].label}`
+            : `Select Arm (${armKey}) to gather ${HARVEST[near.kind].label}`
+          : "");
       }
     }
+  }
+
+  private readHotkeys(): void {
+    const keys = this.keys;
+    if (!keys || !this.room) {
+      return;
+    }
+    if (Phaser.Input.Keyboard.JustDown(keys.C)) {
+      this.craftMenu.toggle();
+    }
+    for (let index = 0; index < this.slotKeys.length; index += 1) {
+      const key = this.slotKeys[index];
+      const slot = HELD_SLOTS[index % 9];
+      if (key && slot && Phaser.Input.Keyboard.JustDown(key)) {
+        this.selectHeld(slot);
+      }
+    }
+    if (Phaser.Input.Keyboard.JustDown(keys.H)) {
+      this.room.send("use", "bandage");
+    }
+  }
+
+  private sendAction(action: CraftAction): void {
+    if (!this.room) {
+      return;
+    }
+    if (action.type === "craft") {
+      this.room.send("craft", action.recipe);
+      return;
+    }
+    if (action.type === "use") {
+      this.room.send("use", action.item);
+      return;
+    }
+    this.selectHeld(action.item);
+  }
+
+  private selectHeld(slot: HeldSlot): void {
+    this.held = slot;
+    this.hud.setHeld(slot);
+    this.weaponMenu.setSelected(slot);
+    if (this.room) {
+      this.views.get(this.room.sessionId)?.setHeld(slot);
+      this.room.send("hold", slot);
+    }
+  }
+
+  private useHeld(): void {
+    if (!this.room) {
+      return;
+    }
+    if (this.held === "gun") {
+      this.pendingFire = true;
+      return;
+    }
+    if (this.held === "arm") {
+      this.pendingGather = true;
+      return;
+    }
+    if (isGrenadeSlot(this.held)) {
+      this.room.send("throw", this.held);
+      return;
+    }
+    this.room.send("use", this.held);
   }
 
   private async connect(): Promise<void> {
     try {
       this.room = await connectToGame(this.playerName);
-      this.setStatus("Connected");
+      this.hud.setStatus("Connected");
       this.bindRoom(this.room);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to connect";
-      this.setStatus(message);
+      this.hud.setStatus(message);
     }
   }
 
@@ -231,12 +389,26 @@ export class GameScene extends Phaser.Scene {
         this.views.get(event.hitId)?.flashHit();
       }
     });
+    room.onMessage("gathered", (event: GatherEvent) => {
+      this.views.get(event.playerId)?.swingMine();
+      if (event.playerId === room.sessionId) {
+        this.actors.popup(event.x, event.y, `+${event.amount} ${event.resource}`);
+      }
+    });
+    room.onMessage("blast", (event: BlastEvent) => {
+      this.actors.blast(event);
+    });
+    room.onMessage("notice", (text: string) => {
+      if (typeof text === "string") {
+        this.hud.showNotice(text);
+      }
+    });
 
     room.onLeave((code) => {
-      this.setStatus(`Disconnected (${code})`);
+      this.hud.setStatus(`Disconnected (${code})`);
     });
-    room.onDrop(() => this.setStatus("Reconnecting..."));
-    room.onReconnect(() => this.setStatus("Connected"));
+    room.onDrop(() => this.hud.setStatus("Reconnecting..."));
+    room.onReconnect(() => this.hud.setStatus("Connected"));
   }
 
   private bindReconciler(player: SyncedPlayer): void {
@@ -249,7 +421,8 @@ export class GameScene extends Phaser.Scene {
       fields: ["x", "y", "angle"],
       smoothMs: 65,
       step: (ctx, state, command) => {
-        applyMovement(state, command as { moveX: number; moveY: number; aimAngle: number }, ctx.dt);
+        const speed = player.slowMs > 0 ? PLAYER_SPEED * SLOW_SPEED_FACTOR : PLAYER_SPEED;
+        applyMovement(state, command as { moveX: number; moveY: number; aimAngle: number }, ctx.dt, GAME_MAP, PLAYER_RADIUS, speed);
       },
     });
   }
@@ -274,6 +447,7 @@ export class GameScene extends Phaser.Scene {
       player.weaponId,
     );
     view.setHealth(player.hp, player.maxHp);
+    view.setArmor(player.armor, player.maxArmor);
     this.views.set(sessionId, view);
   }
 
@@ -314,9 +488,5 @@ export class GameScene extends Phaser.Scene {
       duration: 180,
       onComplete: () => graphics.destroy(),
     });
-  }
-
-  private setStatus(text: string): void {
-    this.statusText?.setText(text);
   }
 }
