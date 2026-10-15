@@ -1,25 +1,26 @@
 import Phaser from "phaser";
-import { PLAYER_RADIUS } from "@io-game/shared";
+import { PLAYER_RADIUS, getWeapon } from "@io-game/shared";
+import { paintWeapon, weaponShape } from "./weaponShape";
 
 export class PlayerView {
   readonly root: Phaser.GameObjects.Container;
   private readonly body: Phaser.GameObjects.Container;
+  private readonly weaponGfx: Phaser.GameObjects.Graphics;
   private readonly hpFill: Phaser.GameObjects.Rectangle;
   private readonly nameLabel: Phaser.GameObjects.Text;
   private readonly hpWidth = 40;
+  private equippedId = "";
 
-  constructor(scene: Phaser.Scene, color: number, x: number, y: number, name: string) {
+  constructor(scene: Phaser.Scene, color: number, x: number, y: number, name: string, weaponId: string) {
     const torso = scene.add.circle(0, 0, PLAYER_RADIUS, color);
     torso.setStrokeStyle(3, 0x102027, 0.9);
 
     const visor = scene.add.circle(7, -5, 6, 0x102027);
-    const leftHand = scene.add.circle(11, 12, 5, 0xffcc80);
-    const rightHand = scene.add.circle(18, 5, 5, 0xffcc80);
-    const stock = scene.add.rectangle(20, 2, 10, 7, 0x4e342e);
-    const gun = scene.add.rectangle(30, 2, 20, 6, 0x263238);
-    const barrel = scene.add.rectangle(42, 2, 10, 3, 0x90a4ae);
+    const rearHand = scene.add.circle(20, 11, 4, 0xffcc80);
+    const foreHand = scene.add.circle(32, 5, 4, 0xffcc80);
+    this.weaponGfx = scene.add.graphics();
 
-    this.body = scene.add.container(0, 0, [torso, visor, leftHand, stock, gun, barrel, rightHand]);
+    this.body = scene.add.container(0, 0, [torso, visor, this.weaponGfx, rearHand, foreHand]);
 
     const hpBg = scene.add.rectangle(0, -PLAYER_RADIUS - 14, this.hpWidth, 6, 0x111111);
     this.hpFill = scene.add.rectangle(-this.hpWidth / 2, -PLAYER_RADIUS - 14, this.hpWidth, 6, 0x66bb6a);
@@ -38,6 +39,7 @@ export class PlayerView {
 
     this.root = scene.add.container(x, y, [this.body, hpBg, this.hpFill, this.nameLabel]);
     this.root.setDepth(10);
+    this.setWeapon(weaponId);
   }
 
   setName(name: string): void {
@@ -49,6 +51,15 @@ export class PlayerView {
   setPose(x: number, y: number, angle: number): void {
     this.root.setPosition(x, y);
     this.body.setRotation(angle);
+  }
+
+  setWeapon(weaponId: string): void {
+    if (this.equippedId === weaponId) {
+      return;
+    }
+    this.equippedId = weaponId;
+    const weapon = getWeapon(weaponId);
+    paintWeapon(this.weaponGfx, weaponShape(weapon.id), weapon.color, 14, 2);
   }
 
   setHealth(hp: number, maxHp: number): void {

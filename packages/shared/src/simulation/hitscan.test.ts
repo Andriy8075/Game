@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PLAYER_RADIUS, WEAPON_RANGE } from "../constants";
+import { getWeapon } from "../weapons/catalog";
 import { castHitscan, muzzleOrigin } from "./hitscan";
 import { getObstacle } from "../world/map";
 
@@ -44,6 +45,19 @@ describe("castHitscan", () => {
     ]);
     expect(result.kind).toBe("player");
     expect(result.id).toBe("near");
+  });
+
+  it("stops a short-range weapon before a distant player", () => {
+    const buckshot = getWeapon("buckshot");
+    const result = castHitscan(
+      200,
+      2200,
+      0,
+      [{ id: "enemy", x: 200 + buckshot.range + 80, y: 2200 }],
+      undefined,
+      buckshot.range,
+    );
+    expect(result.kind).toBe("none");
   });
 
   it("places the muzzle ahead of the body", () => {

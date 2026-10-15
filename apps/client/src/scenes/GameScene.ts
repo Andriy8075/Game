@@ -5,9 +5,12 @@ import {
   INTERP_DELAY_MS,
   MoveInput,
   applyMovement,
+  formatWeaponStats,
+  getWeapon,
   sanitizePlayerName,
   type ShotEvent,
 } from "@io-game/shared";
+import { PickupView } from "../entities/PickupView";
 import { PlayerView } from "../entities/PlayerView";
 import { drawWorld } from "../entities/WorldView";
 import { connectToGame, type GameRoom } from "../network/GameClient";
@@ -21,6 +24,13 @@ type SyncedPlayer = {
   hp: number;
   maxHp: number;
   damage: number;
+  weaponId: string;
+};
+
+type SyncedPickup = {
+  weaponId: string;
+  x: number;
+  y: number;
 };
 
 type KeyMap = {
@@ -41,9 +51,11 @@ export class GameScene extends Phaser.Scene {
   private keys?: KeyMap;
   private statusText?: Phaser.GameObjects.Text;
   private hpText?: Phaser.GameObjects.Text;
+  private weaponText?: Phaser.GameObjects.Text;
   private playerName = DEFAULT_PLAYER_NAME;
   private pendingFire = false;
   private readonly views = new Map<string, PlayerView>();
+  private readonly pickups = new Map<string, PickupView>();
 
   constructor() {
     super("game");
@@ -75,7 +87,7 @@ export class GameScene extends Phaser.Scene {
       .setDepth(1000);
 
     this.add
-      .text(16, 52, "WASD / arrows to move. Mouse aims. Left click shoots.", {
+      .text(16, 52, "WASD / arrows to move. Mouse aims. Left click shoots. Walk over a weapon to pick it up.", {
         fontFamily: "Segoe UI, sans-serif",
         fontSize: "14px",
         color: "#dce7d4",
@@ -90,6 +102,17 @@ export class GameScene extends Phaser.Scene {
         fontFamily: "Segoe UI, sans-serif",
         fontSize: "14px",
         color: "#c8e6c9",
+        backgroundColor: "#00000066",
+        padding: { x: 8, y: 6 },
+      })
+      .setScrollFactor(0)
+      .setDepth(1000);
+
+    this.weaponText = this.add
+      .text(16, 124, "", {
+        fontFamily: "Segoe UI, sans-serif",
+        fontSize: "14px",
+        color: "#fff3c4",
         backgroundColor: "#00000066",
         padding: { x: 8, y: 6 },
       })
@@ -142,10 +165,13 @@ export class GameScene extends Phaser.Scene {
       view.setPose(x, y, angle);
       view.setHealth(player.hp, player.maxHp);
       view.setName(sanitizePlayerName(player.name));
+      const weapon = getWeapon(player.weaponId);
+      view.setWeapon(player.weaponId);
 
       if (sessionId === this.room.sessionId) {
         this.cameras.main.centerOn(x, y);
-        this.hpText?.setText(`HP ${Math.ceil(player.hp)} / ${player.maxHp}   DMG ${player.damage}`);
+        this.hpText?.setText(`HP ${Math.ceil(player.hp)} / ${player.maxHp}`);
+        this.weaponText?.setText(formatWeaponStats(weapon));
       }
     }
   }
@@ -185,6 +211,20 @@ export class GameScene extends Phaser.Scene {
       this.views.delete(id);
     });
 
+    const pickups = room.state.pickups as Map<string, SyncedPickup>;
+    callbacks.onAdd("pickups", (pickup, id) => {
+      const synced = pickup as SyncedPickup;
+      this.spawnPickup(String(id), synced.weaponId, synced.x, synced.y);
+    });
+    callbacks.onRemove("pickups", (_pickup, id) => {
+      const key = String(id);
+      this.pickups.get(key)?.destroy();
+      this.pickups.delete(key);
+    });
+    for (const [id, pickup] of pickups) {
+      this.spawnPickup(String(id), pickup.weaponId, pickup.x, pickup.y);
+    }
+
     room.onMessage("shot", (event: ShotEvent) => {
       this.drawTracer(event);
       if (event.hitId) {
@@ -214,11 +254,25 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  private spawnPickup(id: string, weaponId: string, x: number, y: number): void {
+    if (this.pickups.has(id)) {
+      return;
+    }
+    this.pickups.set(id, new PickupView(this, weaponId, x, y));
+  }
+
   private spawnView(sessionId: string, player: SyncedPlayer): void {
     if (this.views.has(sessionId)) {
       return;
     }
-    const view = new PlayerView(this, player.color, player.x, player.y, sanitizePlayerName(player.name));
+    const view = new PlayerView(
+      this,
+      player.color,
+      player.x,
+      player.y,
+      sanitizePlayerName(player.name),
+      player.weaponId,
+    );
     view.setHealth(player.hp, player.maxHp);
     this.views.set(sessionId, view);
   }
@@ -251,7 +305,7 @@ export class GameScene extends Phaser.Scene {
 
   private drawTracer(event: ShotEvent): void {
     const graphics = this.add.graphics();
-    graphics.lineStyle(2, event.hitId ? 0xff8a65 : 0xfff59d, 1);
+    graphics.lineStyle(2, getWeapon(event.weaponId).color, 1);
     graphics.lineBetween(event.fromX, event.fromY, event.toX, event.toY);
     graphics.setDepth(20);
     this.tweens.add({

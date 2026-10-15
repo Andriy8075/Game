@@ -1,6 +1,16 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { boot, type ColyseusTestServer } from "@colyseus/testing";
-import { DEFAULT_PLAYER_NAME, GAME_ROOM_NAME, MoveInput, PLAYER_RADIUS, getObstacle } from "@io-game/shared";
+import {
+  DEFAULT_PLAYER_NAME,
+  GAME_ROOM_NAME,
+  MoveInput,
+  PICKUP_SLOTS,
+  PLAYER_RADIUS,
+  STARTER_WEAPON_ID,
+  getObstacle,
+  getWeapon,
+  weaponsForSource,
+} from "@io-game/shared";
 import { createGameServer } from "../src/app.config";
 import type { GameState } from "../src/rooms/schema/GameState";
 
@@ -162,6 +172,72 @@ describe("GameRoom", () => {
     await waitTicks(room, 4);
 
     expect(target.hp).toBe(startHp);
+  });
+
+  it("places only field pickups on the map", async () => {
+    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const allowed = new Set<string>(weaponsForSource("pickup").map((weapon) => weapon.id));
+
+    expect(room.state.pickups.size).toBe(PICKUP_SLOTS.length);
+    for (const pickup of room.state.pickups.values()) {
+      expect(allowed.has(pickup.weaponId)).toBe(true);
+    }
+  });
+
+  it("equips a weapon when the player stands on its pickup", async () => {
+    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const client = await colyseus.connectTo(room);
+    const player = room.state.players.get(client.sessionId);
+    const pickup = [...room.state.pickups.values()][0];
+    if (!player || !pickup) {
+      throw new Error("missing player or pickup");
+    }
+
+    const weaponId = pickup.weaponId;
+    player.x = pickup.x;
+    player.y = pickup.y;
+    await waitTicks(room, 3);
+
+    expect(player.weaponId).toBe(weaponId);
+    expect(player.damage).toBe(getWeapon(weaponId).damage);
+    expect(room.state.pickups.size).toBe(PICKUP_SLOTS.length - 1);
+  });
+
+  it("respects the equipped weapon fire cooldown", async () => {
+    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const shooterClient = await colyseus.connectTo(room);
+    const targetClient = await colyseus.connectTo(room);
+    const shooter = room.state.players.get(shooterClient.sessionId);
+    const target = room.state.players.get(targetClient.sessionId);
+    if (!shooter || !target) {
+      throw new Error("missing players");
+    }
+
+    shooter.x = 220;
+    shooter.y = 2200;
+    shooter.angle = 0;
+    target.x = 480;
+    target.y = 2200;
+    const sidearm = getWeapon(STARTER_WEAPON_ID);
+    const startHp = target.hp;
+
+    sendShot(shooterClient, 0);
+    await waitTicks(room, 2);
+    expect(target.hp).toBe(startHp - sidearm.damage);
+
+    sendShot(shooterClient, 0);
+    await waitTicks(room, 2);
+    expect(target.hp).toBe(startHp - sidearm.damage);
+    expect(shooter.weaponId).toBe(STARTER_WEAPON_ID);
+
+    for (let i = 0; i < 10; i += 1) {
+      sendMove(shooterClient, 0, 0);
+      await room.waitForNextTimestep();
+    }
+
+    sendShot(shooterClient, 0);
+    await waitTicks(room, 2);
+    expect(target.hp).toBe(startHp - sidearm.damage * 2);
   });
 
   it("serves a health endpoint", async () => {

@@ -9,3 +9,5 @@ export * from "./simulation/collision";
 export * from "./simulation/hitscan";
 export * from "./simulation/spawns";
 export * from "./world/map";
+export * from "./weapons/catalog";
+export * from "./weapons/pickups";

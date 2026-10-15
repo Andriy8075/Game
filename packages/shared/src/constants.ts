@@ -9,10 +9,11 @@ export const WORLD_HEIGHT = 2400;
 export const PLAYER_RADIUS = 18;
 export const PLAYER_SPEED = 180;
 export const PLAYER_MAX_HP = 100;
-export const PLAYER_DAMAGE = 20;
 export const PLAYER_NAME_MAX_LENGTH = 16;
 export const DEFAULT_PLAYER_NAME = "Player";
 
+/** Starter Sidearm stats. The rest of the arsenal lives in the weapon catalog. */
+export const PLAYER_DAMAGE = 20;
 export const FIRE_COOLDOWN_MS = 250;
 export const WEAPON_RANGE = 720;
 export const MUZZLE_OFFSET = PLAYER_RADIUS + 6;
