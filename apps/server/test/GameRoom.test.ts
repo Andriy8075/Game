@@ -328,6 +328,7 @@ describe("GameRoom", () => {
     shooter.angle = 0;
     target.x = 480;
     target.y = 2200;
+    await waitTicks(room, 18);
 
     sendShot(shooterClient, 0);
     await waitTicks(room, 4);

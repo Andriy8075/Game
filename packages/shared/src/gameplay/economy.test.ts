@@ -1,17 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { PLAYER_RADIUS } from "../constants";
+import { GATHER_REACH, PLAYER_RADIUS } from "../constants";
 import { getObstacle } from "../world/map";
 import {
   armorCraftBlock,
   applyDamage,
   blastDamage,
   canAfford,
+  cycleHeld,
   formatCost,
   gatherRadius,
+  HARVEST,
+  HELD_LABELS,
+  HELD_SHORT,
   HELD_SLOTS,
+  isGrenadeSlot,
+  isHeldSlot,
   getRecipe,
   nearestHarvestable,
   payCost,
+  RECIPES,
+  type HeldSlot,
   type StackCounts,
 } from "./economy";
 
@@ -93,7 +101,102 @@ describe("economy", () => {
 
   it("reduces blast damage toward the edge of the radius", () => {
     expect(blastDamage(0, 120, 45)).toBe(45);
+    const mid = blastDamage(60, 120, 45);
+    expect(mid).toBe(Math.round(45 * (0.45 + 0.55 * 0.5)));
+    expect(mid).toBeLessThan(45);
     expect(blastDamage(120, 120, 45)).toBe(Math.round(45 * 0.45));
     expect(blastDamage(121, 120, 45)).toBe(0);
+    expect(blastDamage(10, 0, 45)).toBe(0);
+  });
+
+  it("drops health only after armor is gone", () => {
+    const bare = { hp: 30, armor: 0 };
+    applyDamage(bare, 50);
+    expect(bare).toEqual({ hp: 0, armor: 0 });
+
+    const untouched = { hp: 30, armor: 10 };
+    applyDamage(untouched, 0);
+    expect(untouched).toEqual({ hp: 30, armor: 10 });
+  });
+});
+
+describe("held slots", () => {
+  it("scrolls gun, grenades, bandage, and arm, and wraps both ways", () => {
+    const forward: HeldSlot[] = [];
+    let slot: HeldSlot = "gun";
+    for (let step = 0; step < HELD_SLOTS.length; step += 1) {
+      slot = cycleHeld(slot, 1);
+      forward.push(slot);
+    }
+    expect(forward).toEqual(["frag", "flash", "incendiary", "bandage", "arm", "gun"]);
+
+    const backward: HeldSlot[] = [];
+    slot = "gun";
+    for (let step = 0; step < HELD_SLOTS.length; step += 1) {
+      slot = cycleHeld(slot, -1);
+      backward.push(slot);
+    }
+    expect(backward).toEqual(["arm", "bandage", "incendiary", "flash", "frag", "gun"]);
+  });
+
+  it("accepts the weapon menu and rejects armor as something to hold", () => {
+    for (const slot of HELD_SLOTS) {
+      expect(isHeldSlot(slot)).toBe(true);
+      expect(HELD_LABELS[slot].length).toBeGreaterThan(0);
+      expect(HELD_SHORT[slot].length).toBeGreaterThan(0);
+    }
+    expect(isHeldSlot("lightArmor")).toBe(false);
+    expect(isHeldSlot("heavyArmor")).toBe(false);
+    expect(isHeldSlot("")).toBe(false);
+    expect(isGrenadeSlot("frag")).toBe(true);
+    expect(isGrenadeSlot("flash")).toBe(true);
+    expect(isGrenadeSlot("incendiary")).toBe(true);
+    expect(isGrenadeSlot("gun")).toBe(false);
+    expect(isGrenadeSlot("bandage")).toBe(false);
+    expect(isGrenadeSlot("arm")).toBe(false);
+  });
+});
+
+describe("recipes and harvest nodes", () => {
+  it("prices every craft and spends only the listed resources", () => {
+    expect(getRecipe("missing")).toBeUndefined();
+    expect(formatCost(getRecipe("frag")?.cost ?? {})).toBe("2 stone, 1 iron");
+    expect(formatCost(getRecipe("flash")?.cost ?? {})).toBe("1 stone, 1 gold");
+    expect(formatCost(getRecipe("incendiary")?.cost ?? {})).toBe("2 wood, 1 iron");
+    expect(formatCost(getRecipe("bandage")?.cost ?? {})).toBe("2 wood");
+    expect(formatCost(getRecipe("lightArmor")?.cost ?? {})).toBe("2 stone, 3 iron");
+    expect(formatCost(getRecipe("heavyArmor")?.cost ?? {})).toBe("4 iron, 2 gold");
+
+    const inventory = stacks({ wood: 9, stone: 9, iron: 9, gold: 9, frag: 2 });
+    for (const recipe of RECIPES) {
+      expect(canAfford(inventory, recipe.cost)).toBe(true);
+      payCost(inventory, recipe.cost);
+    }
+    expect(inventory).toMatchObject({
+      wood: 9 - 2 - 2,
+      stone: 9 - 2 - 1 - 2,
+      iron: 9 - 1 - 1 - 3 - 4,
+      gold: 9 - 1 - 2,
+      frag: 2,
+    });
+  });
+
+  it("describes every resource node", () => {
+    expect(HARVEST.tree).toMatchObject({ resource: "wood", yield: 1, charges: 5 });
+    expect(HARVEST.stone).toMatchObject({ resource: "stone", yield: 1, charges: 4 });
+    expect(HARVEST.iron).toMatchObject({ resource: "iron", yield: 1, charges: 3 });
+    expect(HARVEST.gold).toMatchObject({ resource: "gold", yield: 1, charges: 2 });
+  });
+
+  it("picks the closest node the player can reach", () => {
+    const tree = getObstacle("tree-1");
+    const stone = getObstacle("stone-1");
+    if (!tree || tree.kind !== "tree" || !stone || stone.kind !== "stone") {
+      throw new Error("missing nodes");
+    }
+
+    expect(nearestHarvestable(tree.x, tree.y, () => 1)?.id).toBe("tree-1");
+    expect(nearestHarvestable(stone.x, stone.y, () => 1)?.id).toBe("stone-1");
+    expect(gatherRadius(stone)).toBe(stone.radius + PLAYER_RADIUS + GATHER_REACH);
   });
 });
