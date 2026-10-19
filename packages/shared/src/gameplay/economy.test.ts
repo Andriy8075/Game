@@ -172,6 +172,7 @@ describe("recipes and harvest nodes", () => {
     expect(getRecipe("whisper-kit")?.weaponId).toBe("whisper");
     expect(formatCost(getRecipe("forge-cannon")?.cost ?? {})).toBe("6 iron, 4 gold");
     expect(formatCost(getRecipe("whisper-kit")?.cost ?? {})).toBe("4 iron, 3 gold");
+    expect(formatCost(getRecipe("hire-bot")?.cost ?? {})).toBe("3 wood, 3 stone, 2 iron");
 
     const short = stacks({ wood: 0, stone: 3, iron: 3, gold: 0 });
     expect(canAfford(short, getRecipe("lightArmor")?.cost ?? {})).toBe(false);
@@ -182,9 +183,9 @@ describe("recipes and harvest nodes", () => {
       payCost(inventory, recipe.cost);
     }
     expect(inventory).toMatchObject({
-      wood: 8 - 2 - 2,
-      stone: 10 - 2 - 1 - 3,
-      iron: 30 - 1 - 1 - 4 - 5 - 6 - 4,
+      wood: 8 - 2 - 2 - 3,
+      stone: 10 - 2 - 1 - 3 - 3,
+      iron: 30 - 1 - 1 - 4 - 5 - 6 - 4 - 2,
       gold: 20 - 1 - 3 - 4 - 3,
       frag: 2,
     });

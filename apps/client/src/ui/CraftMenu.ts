@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { RECIPES, armorCraftBlock, canAfford, formatCost, isStackedCraft, type ArmorProgress, type StackCounts } from "@io-game/shared";
+import { MAX_HIRED_BOTS, RECIPES, armorCraftBlock, canAfford, formatCost, isStackedCraft, type ArmorProgress, type StackCounts } from "@io-game/shared";
 
 export type CraftAction =
   | { type: "craft"; recipe: string }
@@ -30,9 +30,14 @@ export class CraftMenu {
   private readonly buttons: ButtonArt[] = [];
   private readonly owned = new Map<string, Phaser.GameObjects.Text>();
   private open = false;
+  private hired = 0;
+  private scroll = 0;
+  private viewHeight = 40 + RECIPES.length * ROW_H;
+  private restingY = 48;
   private originX = 16;
   private originY = 48;
   private readonly panelHeight = 40 + RECIPES.length * ROW_H;
+  private readonly hint: Phaser.GameObjects.Text;
 
   constructor(
     scene: Phaser.Scene,
@@ -52,6 +57,7 @@ export class CraftMenu {
       fontSize: "12px",
       color: "#a5d6a7",
     }).setOrigin(1, 0);
+    this.hint = hint;
 
     const children: Phaser.GameObjects.GameObject[] = [background, title, hint];
 
@@ -75,11 +81,15 @@ export class CraftMenu {
       }).setOrigin(1, 0);
       this.owned.set(recipe.id, owned);
 
-      const craft = this.makeButton(scene, 16, rowY + 40, 88, 24, "Craft", {
+      const hiring = recipe.id === "hire-bot";
+      const craft = this.makeButton(scene, 16, rowY + 40, 88, 24, hiring ? "Hire" : "Craft", {
         type: "craft",
         recipe: recipe.id,
       }, (inventory, armor) => {
         if (!canAfford(inventory, recipe.cost)) {
+          return false;
+        }
+        if (hiring && this.hired >= MAX_HIRED_BOTS) {
           return false;
         }
         if (recipe.id === "lightArmor" || recipe.id === "heavyArmor") {
@@ -107,10 +117,23 @@ export class CraftMenu {
   }
 
   layout(width: number, height = this.root.scene.scale.height): void {
+    const available = Math.max(220, height - 16);
+    this.viewHeight = Math.min(this.panelHeight, available);
+    this.scroll = Math.min(this.scroll, this.maxScroll());
     this.originX = Math.max(16, width - PANEL_W - 16);
-    this.originY = Math.max(8, Math.min(48, height - this.panelHeight - 8));
-    this.root.setPosition(this.originX, this.originY);
-    this.pinScroll();
+    this.restingY = Math.max(8, Math.min(48, height - this.viewHeight - 8));
+    this.hint.setText(this.maxScroll() > 0 ? "wheel · C" : "C close");
+    this.applyPosition();
+  }
+
+  handleWheel(x: number, y: number, deltaY: number): boolean {
+    if (!this.open || deltaY === 0 || this.maxScroll() <= 0 || !this.pointerInside(x, y)) {
+      return false;
+    }
+    const direction = deltaY > 0 ? 1 : -1;
+    this.scroll = Math.max(0, Math.min(this.maxScroll(), this.scroll + direction * ROW_H));
+    this.applyPosition();
+    return true;
   }
 
   toggle(): void {
@@ -122,7 +145,8 @@ export class CraftMenu {
     return this.open;
   }
 
-  refresh(inventory: StackCounts, armor: ArmorProgress, weaponId = ""): void {
+  refresh(inventory: StackCounts, armor: ArmorProgress, weaponId = "", hired = 0): void {
+    this.hired = hired;
     for (const recipe of RECIPES) {
       this.owned.get(recipe.id)?.setText(this.ownedLabel(recipe.id, recipe.weaponId, inventory, armor, weaponId));
     }
@@ -133,10 +157,7 @@ export class CraftMenu {
   }
 
   contains(x: number, y: number): boolean {
-    if (!this.open) {
-      return false;
-    }
-    return x >= this.originX && x <= this.originX + PANEL_W && y >= this.originY && y <= this.originY + this.panelHeight;
+    return this.open && this.pointerInside(x, y);
   }
 
   handlePointer(x: number, y: number): boolean {
@@ -146,12 +167,26 @@ export class CraftMenu {
     for (const button of this.buttons) {
       const left = this.originX + button.x;
       const top = this.originY + button.y;
-      if (x >= left && x <= left + button.w && y >= top && y <= top + button.h) {
+      if (x >= left && x <= left + button.w && y >= top && y <= top + button.h && y >= this.restingY && y <= this.restingY + this.viewHeight) {
         this.onAction(button.action);
         break;
       }
     }
     return true;
+  }
+
+  private maxScroll(): number {
+    return Math.max(0, this.panelHeight - this.viewHeight);
+  }
+
+  private applyPosition(): void {
+    this.originY = this.restingY - this.scroll;
+    this.root.setPosition(this.originX, this.originY);
+    this.pinScroll();
+  }
+
+  private pointerInside(x: number, y: number): boolean {
+    return x >= this.originX && x <= this.originX + PANEL_W && y >= this.restingY && y <= this.restingY + this.viewHeight;
   }
 
   private ownedLabel(
@@ -169,6 +204,9 @@ export class CraftMenu {
     }
     if (id === "heavyArmor") {
       return armor.craftedHeavy ? "worn" : "";
+    }
+    if (id === "hire-bot") {
+      return `${this.hired}/${MAX_HIRED_BOTS}`;
     }
     if (isStackedCraft(id)) {
       return String(inventory[id]);

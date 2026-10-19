@@ -89,6 +89,7 @@ export const RECIPES: readonly Recipe[] = [
   { id: "heavyArmor", name: "Heavy Armor", blurb: `Absorbs ${HEAVY_ARMOR} damage. Equips immediately and replaces light armor.`, cost: { iron: 5, gold: 3 } },
   { id: "forge-cannon", name: "Forge Cannon", blurb: "A heavy crafted gun for this life.", cost: { iron: 6, gold: 4 }, weaponId: "forge" },
   { id: "whisper-kit", name: "Whisper", blurb: "A fast crafted gun for this life.", cost: { iron: 4, gold: 3 }, weaponId: "whisper" },
+  { id: "hire-bot", name: "Hire Bot", blurb: "Weak hunter.", cost: { wood: 3, stone: 3, iron: 2 } },
 ];
 
 export const GRENADE_KIND = {

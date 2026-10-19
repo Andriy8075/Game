@@ -7,6 +7,7 @@ export * from "./math";
 export * from "./simulation/applyMovement";
 export * from "./simulation/collision";
 export * from "./simulation/hitscan";
+export * from "./simulation/navigate";
 export * from "./simulation/walls";
 export * from "./simulation/spawns";
 export * from "./world/map";

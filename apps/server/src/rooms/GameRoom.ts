@@ -2,6 +2,13 @@ import { Client, ClientState, Room, type AuthContext } from "@colyseus/core";
 import { JWT, type JwtPayload } from "colyseus";
 import {
   BANDAGE_HEAL,
+  BOT_COLOR,
+  BOT_DAMAGE,
+  BOT_FIRE_COOLDOWN_MS,
+  BOT_MAX_HP,
+  BOT_RADIUS,
+  BOT_RANGE,
+  BOT_SPEED,
   FIRE_DAMAGE,
   FIRE_RADIUS,
   FIRE_TICK_MS,
@@ -21,6 +28,7 @@ import {
   KILLS_TO_WIN,
   LIGHT_ARMOR,
   MAX_CLIENTS,
+  MAX_HIRED_BOTS,
   MoveInput,
   PICKUP_RESPAWN_MS,
   PICKUP_SLOTS,
@@ -54,10 +62,12 @@ import {
   mapWithWalls,
   muzzleOrigin,
   nearestHarvestable,
+  nextWaypoint,
   overlapsPickup,
   payCost,
   pickSpawn,
   randomPickupWeapon,
+  resolveCollisions,
   resolveMenuWeapon,
   rollJoinLoadout,
   sanitizePlayerName,
@@ -72,7 +82,7 @@ import {
   type ShotEvent,
 } from "@io-game/shared";
 import { addKillXp, findAccountById } from "../accounts/store";
-import { GameState, HazardZone, Inventory, NodeState, PlacedWall, Player, ThrownGrenade, WeaponPickup } from "./schema/GameState";
+import { Bot, GameState, HazardZone, Inventory, NodeState, PlacedWall, Player, ThrownGrenade, WeaponPickup } from "./schema/GameState";
 
 type StepContext = {
   dt: number;
@@ -125,6 +135,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
   private grenadeSeq = 1;
   private hazardSeq = 1;
   private wallSeq = 1;
+  private botSeq = 1;
   private colorIndex = 0;
   private pickupSerial = 0;
   private readonly slotByPickupId = new Map<string, number>();
@@ -268,6 +279,11 @@ export class GameRoom extends Room<{ input: MoveInput }> {
 
   onLeave(client: Client): void {
     this.state.players.delete(client.sessionId);
+    for (const id of [...this.state.bots.keys()]) {
+      if (this.state.bots.get(id)?.ownerId === client.sessionId) {
+        this.removeBot(id);
+      }
+    }
     this.lastFireAt.delete(client.sessionId);
     this.lastGatherAt.delete(client.sessionId);
     this.lastThrowAt.delete(client.sessionId);
@@ -311,6 +327,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       }
       this.collectPickups(player, now);
     }
+    this.stepBots(ctx.dt, ctx.dtMs, now);
   }
 
   private respawnNodes(now: number): void {
@@ -365,6 +382,10 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     const player = this.state.players.get(sessionId);
     const recipe = getRecipe(recipeId);
     if (!player || !recipe) {
+      return;
+    }
+    if (recipe.id === "hire-bot") {
+      this.hireBot(sessionId, player);
       return;
     }
     if (recipe.id === "lightArmor" || recipe.id === "heavyArmor") {
@@ -503,6 +524,11 @@ export class GameRoom extends Room<{ input: MoveInput }> {
           player.slowMs = Math.max(player.slowMs, FLASH_SLOW_MS);
         }
       }
+      for (const bot of this.state.bots.values()) {
+        if (Math.hypot(bot.x - grenade.x, bot.y - grenade.y) <= FLASH_RADIUS) {
+          bot.slowMs = Math.max(bot.slowMs, FLASH_SLOW_MS);
+        }
+      }
       this.emitBlast(grenade.x, grenade.y, FLASH_RADIUS, grenade.kind);
       return;
     }
@@ -559,6 +585,14 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       }
     }
     this.damageWalls(x, y, radius, damage, falloff);
+    for (const [id, bot] of [...this.state.bots.entries()]) {
+      if (this.state.matchOver) {
+        return;
+      }
+      const distance = Math.hypot(bot.x - x, bot.y - y);
+      const amount = falloff ? blastDamage(distance, radius, damage) : distance <= radius ? damage : 0;
+      this.damageBot(id, amount);
+    }
   }
 
   private emitBlast(x: number, y: number, radius: number, kind: number): void {
@@ -600,6 +634,8 @@ export class GameRoom extends Room<{ input: MoveInput }> {
         if (target.hp <= 0 && result.id) {
           this.onDowned(result.id, sessionId);
         }
+      } else {
+        this.damageBot(result.id, weapon.damage);
       }
     }
 
@@ -729,10 +765,11 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     }
 
     const rect = wallRectForAim(player.x, player.y, player.angle);
+    const bodies = [...this.state.players.values(), ...this.state.bots.values()];
     const blocked = wallPlacementBlock(
       rect,
       GAME_MAP,
-      [...this.state.players.values()],
+      bodies,
       [...this.state.walls.values()],
     );
     if (blocked) {
@@ -786,21 +823,184 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     }
   }
 
-  private targetsSeenBy(sessionId: string): Array<{ id: string; x: number; y: number }> {
+  private hireBot(sessionId: string, player: Player): void {
+    const recipe = getRecipe("hire-bot");
+    if (!recipe) {
+      return;
+    }
+    if (this.countBots(sessionId) >= MAX_HIRED_BOTS) {
+      this.clients.get(sessionId)?.send("notice", `You can only hire ${MAX_HIRED_BOTS} bots`);
+      return;
+    }
+    if (!canAfford(player.inventory, recipe.cost)) {
+      this.clients.get(sessionId)?.send("notice", `Need ${formatCost(recipe.cost)}`);
+      return;
+    }
+
+    payCost(player.inventory, recipe.cost);
+    const bot = new Bot();
+    const slot = this.countBots(sessionId);
+    const angle = slot * 1.2 + Math.PI / 2;
+    const dist = PLAYER_RADIUS + BOT_RADIUS + 10;
+    const spot = resolveCollisions(player.x + Math.cos(angle) * dist, player.y + Math.sin(angle) * dist, BOT_RADIUS, this.liveMap());
+    bot.x = spot.x;
+    bot.y = spot.y;
+    bot.hp = BOT_MAX_HP;
+    bot.maxHp = BOT_MAX_HP;
+    bot.ownerId = sessionId;
+    bot.color = BOT_COLOR;
+    this.state.bots.set(`bot-${this.botSeq}`, bot);
+    this.botSeq += 1;
+    this.clients.get(sessionId)?.send("notice", "Hired a bot");
+  }
+
+  private countBots(ownerId: string): number {
+    let count = 0;
+    for (const bot of this.state.bots.values()) {
+      if (bot.ownerId === ownerId) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  private removeBot(id: string): void {
+    this.state.bots.delete(id);
+    this.lastFireAt.delete(id);
+  }
+
+  private damageBot(id: string, amount: number): void {
+    const bot = this.state.bots.get(id);
+    if (!bot || amount <= 0) {
+      return;
+    }
+    applyDamage(bot, amount);
+    if (bot.hp <= 0) {
+      this.removeBot(id);
+    }
+  }
+
+  private stepBots(dt: number, dtMs: number, now: number): void {
+    for (const [id, bot] of this.state.bots) {
+      if (this.state.matchOver) {
+        return;
+      }
+      if (bot.slowMs > 0) {
+        bot.slowMs = Math.max(0, bot.slowMs - dtMs);
+      }
+      const target = this.nearestEnemy(bot);
+      if (!target) {
+        continue;
+      }
+      const distance = Math.hypot(target.x - bot.x, target.y - bot.y);
+      const aim = Math.atan2(target.y - bot.y, target.x - bot.x);
+      const keep = PLAYER_RADIUS + BOT_RADIUS + 16;
+      const speed = bot.slowMs > 0 ? BOT_SPEED * SLOW_SPEED_FACTOR : BOT_SPEED;
+      const world = this.liveMap();
+      const steer = distance > keep
+        ? nextWaypoint(bot.x, bot.y, target.x, target.y, BOT_RADIUS, world)
+        : { x: target.x, y: target.y };
+      const dx = steer.x - bot.x;
+      const dy = steer.y - bot.y;
+      const steerDistance = Math.hypot(dx, dy);
+      if (distance > keep && steerDistance > 1) {
+        const step = Math.min(speed * dt, steerDistance);
+        const spot = resolveCollisions(bot.x + (dx / steerDistance) * step, bot.y + (dy / steerDistance) * step, BOT_RADIUS, world);
+        bot.x = spot.x;
+        bot.y = spot.y;
+      }
+      bot.angle = wrapAngle(aim);
+      if (distance <= BOT_RANGE) {
+        this.botFire(id, bot, now);
+      }
+    }
+  }
+
+  private nearestEnemy(bot: Bot): Player | undefined {
+    let best: Player | undefined;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const [sessionId, player] of this.state.players) {
+      if (sessionId === bot.ownerId) {
+        continue;
+      }
+      const distance = Math.hypot(player.x - bot.x, player.y - bot.y);
+      if (distance < bestDistance) {
+        best = player;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  }
+
+  private botFire(id: string, bot: Bot, now: number): void {
+    if (this.state.matchOver) {
+      return;
+    }
+    const last = this.lastFireAt.get(id) ?? Number.NEGATIVE_INFINITY;
+    if (now - last < BOT_FIRE_COOLDOWN_MS) {
+      return;
+    }
+    this.lastFireAt.set(id, now);
+
+    const world = this.liveMap();
+    const origin = muzzleOrigin(bot.x, bot.y, bot.angle, BOT_RADIUS + 6);
+    const targets = [...this.state.players.entries()]
+      .filter(([sessionId]) => sessionId !== bot.ownerId)
+      .map(([sessionId, player]) => ({ id: sessionId, x: player.x, y: player.y }));
+    const result = castHitscan(origin.x, origin.y, bot.angle, targets, world, BOT_RANGE, id);
+    if (result.kind === "obstacle" && result.id) {
+      this.hurtWall(result.id, BOT_DAMAGE);
+    }
+    if (result.kind === "player" && result.id) {
+      const target = this.state.players.get(result.id);
+      if (target) {
+        applyDamage(target, BOT_DAMAGE);
+        if (target.hp <= 0) {
+          this.onDowned(result.id, bot.ownerId);
+        }
+      }
+    }
+
+    const event: ShotEvent = {
+      shooterId: id,
+      fromX: origin.x,
+      fromY: origin.y,
+      toX: result.x,
+      toY: result.y,
+      hitId: result.kind === "player" ? result.id : undefined,
+      weaponId: STARTER_WEAPON_ID,
+    };
+    this.broadcast("shot", event);
+  }
+
+  private botTargets(): Array<{ id: string; x: number; y: number; radius: number }> {
+    return [...this.state.bots.entries()].map(([id, bot]) => ({
+      id,
+      x: bot.x,
+      y: bot.y,
+      radius: BOT_RADIUS,
+    }));
+  }
+
+  private targetsSeenBy(sessionId: string): Array<{ id: string; x: number; y: number; radius?: number }> {
     const players = [...this.state.players.entries()].filter(([id]) => id !== sessionId);
+    const bodies = players.map(([id, other]) => ({ id, other }));
     // Test steps skip the wall clock, so the lag-comp history still has old positions.
+    let seenPlayers: Array<{ id: string; x: number; y: number }>;
     if (this.manualTime) {
-      return players.map(([id, other]) => ({ id, x: other.x, y: other.y }));
+      seenPlayers = bodies.map(({ id, other }) => ({ id, x: other.x, y: other.y }));
+    } else {
+      try {
+        const seen = this.rewind.lastSeenBy(sessionId);
+        seenPlayers = bodies.map(({ id, other }) => {
+          const pose = seen.read(other, ["x", "y"]);
+          return { id, x: pose.x, y: pose.y };
+        });
+      } catch {
+        seenPlayers = bodies.map(({ id, other }) => ({ id, x: other.x, y: other.y }));
+      }
     }
-    try {
-      const seen = this.rewind.lastSeenBy(sessionId);
-      return players.map(([id, other]) => {
-        const pose = seen.read(other, ["x", "y"]);
-        return { id, x: pose.x, y: pose.y };
-      });
-    } catch {
-      return players.map(([id, other]) => ({ id, x: other.x, y: other.y }));
-    }
+    return [...seenPlayers, ...this.botTargets()];
   }
 
   private onDowned(victimId: string, killerId: string | undefined): void {

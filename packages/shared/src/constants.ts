@@ -47,6 +47,16 @@ export const WALL_GAP = 10;
 export const WALL_PLACE_COOLDOWN_MS = 300;
 export const WALL_MAX_PER_PLAYER = 8;
 
+/** Hired guns are slower, shorter-ranged, and much softer than a player. */
+export const BOT_MAX_HP = 30;
+export const BOT_DAMAGE = 6;
+export const BOT_RANGE = 280;
+export const BOT_FIRE_COOLDOWN_MS = 900;
+export const BOT_SPEED = 90;
+export const BOT_RADIUS = 14;
+export const MAX_HIRED_BOTS = 8;
+export const BOT_COLOR = 0x8d6e63;
+
 export const PLAYER_COLORS = [
   0x4fc3f7,
   0xff8a65,

@@ -1,5 +1,5 @@
 import { schema, t, type SchemaType } from "@colyseus/schema";
-import { DEFAULT_PLAYER_NAME, PLAYER_DAMAGE, PLAYER_MAX_HP } from "../constants";
+import { BOT_COLOR, BOT_MAX_HP, DEFAULT_PLAYER_NAME, PLAYER_DAMAGE, PLAYER_MAX_HP } from "../constants";
 import { STARTER_WEAPON_ID } from "../weapons/catalog";
 
 export const Inventory = schema({
@@ -89,6 +89,20 @@ export const PlacedWall = schema({
 
 export type PlacedWall = SchemaType<typeof PlacedWall>;
 
+export const Bot = schema({
+  x: t.number().default(0),
+  y: t.number().default(0),
+  angle: t.number().default(0),
+  hp: t.number().default(BOT_MAX_HP),
+  maxHp: t.number().default(BOT_MAX_HP),
+  armor: t.number().default(0),
+  slowMs: t.number().default(0),
+  ownerId: t.string().default(""),
+  color: t.number().default(BOT_COLOR),
+}, "Bot");
+
+export type Bot = SchemaType<typeof Bot>;
+
 export const GameState = schema({
   players: t.map(Player),
   pickups: t.map(WeaponPickup),
@@ -96,6 +110,7 @@ export const GameState = schema({
   grenades: t.map(ThrownGrenade),
   hazards: t.map(HazardZone),
   walls: t.map(PlacedWall),
+  bots: t.map(Bot),
   matchOver: t.boolean().default(false),
   winnerName: t.string().default(""),
 }, "GameState");

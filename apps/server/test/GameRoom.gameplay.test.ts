@@ -2,6 +2,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ColyseusTestServer } from "@colyseus/testing";
 import {
   BANDAGE_HEAL,
+  BOT_DAMAGE,
+  BOT_MAX_HP,
+  BOT_SPEED,
   FIRE_DAMAGE,
   FLASH_RADIUS,
   FLASH_SLOW_MS,
@@ -11,6 +14,7 @@ import {
   HARVEST,
   HEAVY_ARMOR,
   LIGHT_ARMOR,
+  MAX_HIRED_BOTS,
   MoveInput,
   PLAYER_DAMAGE,
   PLAYER_MAX_HP,
@@ -655,10 +659,145 @@ describe("gather, craft, and combat", () => {
     expect(room.state.walls.size).toBe(8);
     expect(player.inventory.wood).toBe(6);
   });
+
+  it("hires a weak bot that walks to the nearest other player and shoots them", async () => {
+    const room = await openRoom();
+    const ownerClient = await colyseus.connectTo(room);
+    const enemyClient = await colyseus.connectTo(room);
+    const owner = requirePlayer(room, ownerClient.sessionId);
+    const enemy = requirePlayer(room, enemyClient.sessionId);
+    owner.x = 220;
+    owner.y = 2200;
+    enemy.x = 1100;
+    enemy.y = 2200;
+
+    sendMessage(ownerClient, "craft", "hire-bot");
+    await waitTicks(room, 2);
+    expect(room.state.bots.size).toBe(0);
+
+    owner.inventory.wood = 3;
+    owner.inventory.stone = 3;
+    owner.inventory.iron = 2;
+    sendMessage(ownerClient, "craft", "hire-bot");
+    await waitTicks(room, 2);
+    const bot = onlyBot(room);
+    const startX = bot.x;
+    expect(bot.hp).toBe(BOT_MAX_HP);
+    expect(bot.maxHp).toBeLessThan(PLAYER_MAX_HP);
+    expect(bot.ownerId).toBe(ownerClient.sessionId);
+    expect(owner.inventory.wood).toBe(0);
+    expect(owner.inventory.iron).toBe(0);
+
+    const approachTicks = 40;
+    await waitTicks(room, approachTicks);
+    expect(bot.x).toBeGreaterThan(startX + BOT_SPEED * (approachTicks / TICK_RATE) * 0.5);
+    expect(enemy.hp).toBe(PLAYER_MAX_HP);
+    expect(owner.hp).toBe(PLAYER_MAX_HP);
+
+    await waitTicks(room, 280);
+    const dealt = PLAYER_MAX_HP - enemy.hp;
+    expect(dealt).toBeGreaterThan(0);
+    expect(dealt % BOT_DAMAGE).toBe(0);
+    expect(BOT_DAMAGE).toBeLessThan(PLAYER_DAMAGE);
+    expect(owner.hp).toBe(PLAYER_MAX_HP);
+  });
+
+  it("deals one weak hit when the enemy is already in range", async () => {
+    const room = await openRoom();
+    const ownerClient = await colyseus.connectTo(room);
+    const enemyClient = await colyseus.connectTo(room);
+    const owner = requirePlayer(room, ownerClient.sessionId);
+    const enemy = requirePlayer(room, enemyClient.sessionId);
+    owner.x = 220;
+    owner.y = 2200;
+    enemy.x = 400;
+    enemy.y = 2200;
+    owner.inventory.wood = 3;
+    owner.inventory.stone = 3;
+    owner.inventory.iron = 2;
+    sendMessage(ownerClient, "craft", "hire-bot");
+    await waitTicks(room, 1);
+    expect(enemy.hp).toBe(PLAYER_MAX_HP - BOT_DAMAGE);
+    expect(owner.hp).toBe(PLAYER_MAX_HP);
+  });
+
+  it("walks a hired bot around the yard fence to reach a player", async () => {
+    const room = await openRoom();
+    const ownerClient = await colyseus.connectTo(room);
+    const enemyClient = await colyseus.connectTo(room);
+    const owner = requirePlayer(room, ownerClient.sessionId);
+    const enemy = requirePlayer(room, enemyClient.sessionId);
+    owner.x = 200;
+    owner.y = 200;
+    enemy.x = 1280;
+    enemy.y = 500;
+    owner.inventory.wood = 3;
+    owner.inventory.stone = 3;
+    owner.inventory.iron = 2;
+    sendMessage(ownerClient, "craft", "hire-bot");
+    await waitTicks(room, 1);
+    const bot = onlyBot(room);
+    bot.x = 1280;
+    bot.y = 1000;
+
+    await waitTicks(room, 90);
+    expect(bot.y).toBeGreaterThan(1080);
+    expect(enemy.hp).toBe(PLAYER_MAX_HP);
+  });
+
+  it("lets a player destroy a hired bot and stops at the hire cap", async () => {
+    const room = await openRoom();
+    const ownerClient = await colyseus.connectTo(room);
+    const enemyClient = await colyseus.connectTo(room);
+    const owner = requirePlayer(room, ownerClient.sessionId);
+    const enemy = requirePlayer(room, enemyClient.sessionId);
+    owner.x = 220;
+    owner.y = 2200;
+    enemy.x = 2200;
+    enemy.y = 2200;
+    owner.inventory.wood = 3 * (MAX_HIRED_BOTS + 1);
+    owner.inventory.stone = 3 * (MAX_HIRED_BOTS + 1);
+    owner.inventory.iron = 2 * (MAX_HIRED_BOTS + 1);
+
+    for (let hire = 0; hire < MAX_HIRED_BOTS + 1; hire += 1) {
+      sendMessage(ownerClient, "craft", "hire-bot");
+    }
+    await waitTicks(room, 2);
+    expect(room.state.bots.size).toBe(MAX_HIRED_BOTS);
+    expect(owner.inventory.wood).toBe(3);
+    expect(owner.inventory.stone).toBe(3);
+    expect(owner.inventory.iron).toBe(2);
+
+    const bots = [...room.state.bots.values()];
+    const bot = bots[0];
+    if (!bot) {
+      throw new Error("missing hired bots");
+    }
+    bot.x = 480;
+    bot.y = 2200;
+    for (const spare of bots.slice(1)) {
+      spare.x = 220;
+      spare.y = 1800;
+    }
+    sendShot(ownerClient, 0);
+    await waitTicks(room, 2);
+    expect(bot.hp).toBe(BOT_MAX_HP - PLAYER_DAMAGE);
+
+    await waitTicks(room, 10);
+    sendShot(ownerClient, 0);
+    await waitTicks(room, 2);
+    expect(room.state.bots.size).toBe(MAX_HIRED_BOTS - 1);
+
+    await ownerClient.leave();
+    await waitTicks(room, 1);
+    expect(room.state.bots.size).toBe(0);
+    expect(room.state.players.has(enemyClient.sessionId)).toBe(true);
+  });
 });
 
 type InputClient = {
   sessionId: string;
+  leave: () => Promise<unknown>;
   input: (options?: { type: typeof MoveInput }) => {
     data: {
       moveX: number;
@@ -673,6 +812,14 @@ type InputClient = {
 };
 
 type RoomState = GameRoom;
+
+function onlyBot(room: RoomState) {
+  const bot = [...room.state.bots.values()][0];
+  if (!bot) {
+    throw new Error("missing bot");
+  }
+  return bot;
+}
 
 function requirePlayer(room: RoomState, sessionId: string) {
   const player = room.state.players.get(sessionId);

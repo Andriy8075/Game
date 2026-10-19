@@ -67,6 +67,17 @@ type SyncedPickup = {
   y: number;
 };
 
+type SyncedBot = {
+  x: number;
+  y: number;
+  angle: number;
+  hp: number;
+  maxHp: number;
+  slowMs: number;
+  ownerId: string;
+  color: number;
+};
+
 type KeyMap = {
   W: Phaser.Input.Keyboard.Key;
   A: Phaser.Input.Keyboard.Key;
@@ -110,6 +121,7 @@ export class GameScene extends Phaser.Scene {
   private pendingFire = false;
   private pendingGather = false;
   private readonly views = new Map<string, PlayerView>();
+  private readonly botViews = new Map<string, PlayerView>();
   private readonly pickups = new Map<string, PickupView>();
 
   constructor() {
@@ -187,8 +199,11 @@ export class GameScene extends Phaser.Scene {
       }
     });
 
-    this.input.on("wheel", (_pointer: Phaser.Input.Pointer, _over: Phaser.GameObjects.GameObject[], _deltaX: number, deltaY: number) => {
+    this.input.on("wheel", (pointer: Phaser.Input.Pointer, _over: Phaser.GameObjects.GameObject[], _deltaX: number, deltaY: number) => {
       if (this.matchEnded || deltaY === 0) {
+        return;
+      }
+      if (this.craftMenu.handleWheel(pointer.x, pointer.y, deltaY)) {
         return;
       }
       this.selectHeld(cycleHeld(this.held, deltaY > 0 ? 1 : -1));
@@ -245,6 +260,7 @@ export class GameScene extends Phaser.Scene {
       grenades: Map<string, { x: number; y: number; kind: number }>;
       hazards: Map<string, { x: number; y: number; radius: number; kind: number }>;
       walls: Map<string, { x: number; y: number; width: number; height: number; hp: number; maxHp: number; material: string }>;
+      bots: Map<string, SyncedBot>;
     };
     this.hud.setScoreboard([...state.players.values()].map((player) => ({
       name: sanitizePlayerName(player.name),
@@ -255,6 +271,7 @@ export class GameScene extends Phaser.Scene {
     this.actors.syncGrenades(state.grenades);
     this.actors.syncHazards(state.hazards);
     this.actors.syncWalls(state.walls);
+    this.syncBots(state.bots);
 
     for (const [sessionId, player] of state.players) {
       const view = this.views.get(sessionId);
@@ -288,10 +305,11 @@ export class GameScene extends Phaser.Scene {
         );
         this.hud.setVitals(player.hp, player.maxHp, player.armor, player.maxArmor, player.damage);
         this.hud.setInventory(inventory);
+        const hired = [...state.bots.values()].filter((bot) => bot.ownerId === sessionId).length;
         this.craftMenu.refresh(inventory, {
           craftedLight: player.craftedLight,
           craftedHeavy: player.craftedHeavy,
-        }, player.weaponId);
+        }, player.weaponId, hired);
         const near = nearestHarvestable(x, y, (id) => state.nodes.get(id)?.remaining ?? 0);
         const armKey = HELD_SLOTS.indexOf("arm") + 1;
         const payment = chooseWallPayment(inventory);
@@ -440,6 +458,7 @@ export class GameScene extends Phaser.Scene {
       this.drawTracer(event);
       if (event.hitId) {
         this.views.get(event.hitId)?.flashHit();
+        this.botViews.get(event.hitId)?.flashHit();
       }
     });
     room.onMessage("gathered", (event: GatherEvent) => {
@@ -499,6 +518,30 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     this.pickups.set(id, new PickupView(this, weaponId, x, y));
+  }
+
+  private syncBots(bots: Map<string, SyncedBot> | undefined): void {
+    const seen = new Set<string>();
+    if (bots) {
+      for (const [id, bot] of bots) {
+        seen.add(id);
+        let view = this.botViews.get(id);
+        if (!view) {
+          view = new PlayerView(this, bot.color, bot.x, bot.y, "Bot", STARTER_WEAPON_ID);
+          view.root.setScale(0.7);
+          this.botViews.set(id, view);
+        }
+        view.setPose(bot.x, bot.y, bot.angle);
+        view.setHealth(bot.hp, bot.maxHp);
+        view.setSlowed(bot.slowMs > 0);
+      }
+    }
+    for (const [id, view] of this.botViews) {
+      if (!seen.has(id)) {
+        view.destroy();
+        this.botViews.delete(id);
+      }
+    }
   }
 
   private spawnView(sessionId: string, player: SyncedPlayer): void {
