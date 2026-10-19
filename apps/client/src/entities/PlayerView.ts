@@ -11,6 +11,8 @@ export class PlayerView {
   private readonly armorFill: Phaser.GameObjects.Rectangle;
   private readonly armorBg: Phaser.GameObjects.Rectangle;
   private readonly slowRing: Phaser.GameObjects.Arc;
+  private readonly wardRing: Phaser.GameObjects.Arc;
+  private readonly hasteRing: Phaser.GameObjects.Arc;
   private readonly carried: Phaser.GameObjects.Arc;
   private readonly carriedBox: Phaser.GameObjects.Rectangle;
   private readonly leftHand: Phaser.GameObjects.Arc;
@@ -71,8 +73,16 @@ export class PlayerView {
     this.slowRing.setStrokeStyle(2, 0x81d4fa, 0.9);
     this.slowRing.isFilled = false;
     this.slowRing.setVisible(false);
+    this.wardRing = scene.add.circle(0, 0, PLAYER_RADIUS + 10);
+    this.wardRing.setStrokeStyle(2, 0x66bb6a, 0.95);
+    this.wardRing.isFilled = false;
+    this.wardRing.setVisible(false);
+    this.hasteRing = scene.add.circle(0, 0, PLAYER_RADIUS + 14);
+    this.hasteRing.setStrokeStyle(2, 0xffd54f, 0.95);
+    this.hasteRing.isFilled = false;
+    this.hasteRing.setVisible(false);
 
-    this.root = scene.add.container(x, y, [this.slowRing, this.body, hpBg, this.hpFill, armorBg, this.armorFill, this.nameLabel]);
+    this.root = scene.add.container(x, y, [this.hasteRing, this.wardRing, this.slowRing, this.body, hpBg, this.hpFill, armorBg, this.armorFill, this.nameLabel]);
     this.armorBg = armorBg;
     this.root.setDepth(10);
     this.setWeapon(weaponId);
@@ -112,15 +122,17 @@ export class PlayerView {
     this.armorFill.width = this.hpWidth * ratio;
   }
 
-  setSlowed(slowed: boolean): void {
+  setBuffs(slowed: boolean, warded: boolean, hasted: boolean): void {
     this.slowRing.setVisible(slowed);
+    this.wardRing.setVisible(warded);
+    this.hasteRing.setVisible(hasted);
   }
 
   setHeld(slot: HeldSlot): void {
     const gunOut = slot === "gun";
     this.weaponGfx.setVisible(gunOut);
-    this.carried.setVisible(slot === "frag" || slot === "flash" || slot === "incendiary");
-    this.carriedBox.setVisible(slot === "bandage" || slot === "wall");
+    this.carried.setVisible(slot === "frag" || slot === "flash" || slot === "incendiary" || slot === "bastion" || slot === "gale");
+    this.carriedBox.setVisible(slot === "bandage" || slot === "wall" || slot === "ramspike");
     this.carriedBox.setSize(slot === "wall" ? 20 : 14, slot === "wall" ? 8 : 10);
     const changed = slot !== this.handPose;
     this.handPose = slot;
@@ -137,10 +149,16 @@ export class PlayerView {
       this.carried.setFillStyle(0xfff59d);
     } else if (slot === "incendiary") {
       this.carried.setFillStyle(0xff7043);
+    } else if (slot === "bastion") {
+      this.carried.setFillStyle(0x66bb6a);
+    } else if (slot === "gale") {
+      this.carried.setFillStyle(0x4fc3f7);
     } else if (slot === "bandage") {
       this.carriedBox.setFillStyle(0xfafafa);
     } else if (slot === "wall") {
       this.carriedBox.setFillStyle(0x8d6e63);
+    } else if (slot === "ramspike") {
+      this.carriedBox.setFillStyle(0xffb74d);
     }
   }
 

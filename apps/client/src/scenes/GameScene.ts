@@ -8,11 +8,10 @@ import {
   INTERP_DELAY_MS,
   MoveInput,
   PLAYER_RADIUS,
-  PLAYER_SPEED,
-  SLOW_SPEED_FACTOR,
   STARTER_WEAPON_ID,
   applyMovement,
   chooseWallPayment,
+  playerMoveSpeed,
   cycleHeld,
   formatWeaponStats,
   getWeapon,
@@ -53,6 +52,8 @@ type SyncedPlayer = {
   armor: number;
   maxArmor: number;
   slowMs: number;
+  wardMs: number;
+  hasteMs: number;
   held: string;
   craftedLight: boolean;
   craftedHeavy: boolean;
@@ -100,6 +101,9 @@ const EMPTY_INVENTORY: StackCounts = {
   flash: 0,
   incendiary: 0,
   bandage: 0,
+  bastion: 0,
+  gale: 0,
+  ramspike: 0,
   lightArmor: 0,
   heavyArmor: 0,
 };
@@ -287,7 +291,7 @@ export class GameScene extends Phaser.Scene {
       view.setName(sanitizePlayerName(player.name));
       view.setWeapon(player.weaponId);
       view.setArmor(player.armor, player.maxArmor);
-      view.setSlowed(player.slowMs > 0);
+      view.setBuffs(player.slowMs > 0, (player.wardMs ?? 0) > 0, (player.hasteMs ?? 0) > 0);
       const syncedHeld = isHeldSlot(player.held) ? player.held : "gun";
       view.setHeld(sessionId === this.room.sessionId ? this.held : syncedHeld);
 
@@ -303,7 +307,7 @@ export class GameScene extends Phaser.Scene {
           player.armor,
           player.maxArmor,
         );
-        this.hud.setVitals(player.hp, player.maxHp, player.armor, player.maxArmor, player.damage);
+        this.hud.setVitals(player.hp, player.maxHp, player.armor, player.maxArmor, player.damage, player.wardMs ?? 0, player.hasteMs ?? 0);
         this.hud.setInventory(inventory);
         const hired = [...state.bots.values()].filter((bot) => bot.ownerId === sessionId).length;
         this.craftMenu.refresh(inventory, {
@@ -340,7 +344,7 @@ export class GameScene extends Phaser.Scene {
     }
     for (let index = 0; index < this.slotKeys.length; index += 1) {
       const key = this.slotKeys[index];
-      const slot = HELD_SLOTS[index % 9];
+      const slot = HELD_SLOTS[index % HELD_SLOTS.length];
       if (key && slot && Phaser.Input.Keyboard.JustDown(key)) {
         this.selectHeld(slot);
       }
@@ -507,8 +511,7 @@ export class GameScene extends Phaser.Scene {
       fields: ["x", "y", "angle"],
       smoothMs: 65,
       step: (ctx, state, command) => {
-        const speed = player.slowMs > 0 ? PLAYER_SPEED * SLOW_SPEED_FACTOR : PLAYER_SPEED;
-        applyMovement(state, command as { moveX: number; moveY: number; aimAngle: number }, ctx.dt, this.worldForMovement(), PLAYER_RADIUS, speed);
+        applyMovement(state, command as { moveX: number; moveY: number; aimAngle: number }, ctx.dt, this.worldForMovement(), PLAYER_RADIUS, playerMoveSpeed(player));
       },
     });
   }
@@ -533,7 +536,7 @@ export class GameScene extends Phaser.Scene {
         }
         view.setPose(bot.x, bot.y, bot.angle);
         view.setHealth(bot.hp, bot.maxHp);
-        view.setSlowed(bot.slowMs > 0);
+        view.setBuffs(bot.slowMs > 0, false, false);
       }
     }
     for (const [id, view] of this.botViews) {

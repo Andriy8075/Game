@@ -11,6 +11,9 @@ export const Inventory = schema({
   flash: t.number().default(0),
   incendiary: t.number().default(0),
   bandage: t.number().default(0),
+  bastion: t.number().default(0),
+  gale: t.number().default(0),
+  ramspike: t.number().default(0),
   lightArmor: t.number().default(0),
   heavyArmor: t.number().default(0),
 }, "Inventory");
@@ -30,6 +33,8 @@ export const Player = schema({
   armor: t.number().default(0),
   maxArmor: t.number().default(0),
   slowMs: t.number().default(0),
+  wardMs: t.number().default(0),
+  hasteMs: t.number().default(0),
   held: t.string().default("gun"),
   craftedLight: t.boolean().default(false),
   craftedHeavy: t.boolean().default(false),

@@ -2,6 +2,7 @@ import { Client, ClientState, Room, type AuthContext } from "@colyseus/core";
 import { JWT, type JwtPayload } from "colyseus";
 import {
   BANDAGE_HEAL,
+  BASTION_MS,
   BOT_COLOR,
   BOT_DAMAGE,
   BOT_FIRE_COOLDOWN_MS,
@@ -18,6 +19,7 @@ import {
   FRAG_DAMAGE,
   FRAG_RADIUS,
   GAME_MAP,
+  GALE_MS,
   GATHER_COOLDOWN_MS,
   GRENADE_FUSE_MS,
   GRENADE_KIND,
@@ -35,7 +37,7 @@ import {
   PLAYER_COLORS,
   PLAYER_MAX_HP,
   PLAYER_RADIUS,
-  PLAYER_SPEED,
+  RAMSPIKE_DISTANCE,
   SLOW_SPEED_FACTOR,
   STARTER_WEAPON_ID,
   THROW_COOLDOWN_MS,
@@ -47,6 +49,7 @@ import {
   applyDamage,
   applyMovement,
   blastDamage,
+  isUseItem,
   canAfford,
   castHitscan,
   chooseWallPayment,
@@ -64,6 +67,8 @@ import {
   nearestHarvestable,
   nextWaypoint,
   overlapsPickup,
+  playerMoveSpeed,
+  pushForward,
   payCost,
   pickSpawn,
   randomPickupWeapon,
@@ -90,7 +95,6 @@ type StepContext = {
   tick: number;
 };
 
-const USE_IDS = new Set(["bandage"]);
 const THROW_IDS = new Set<CraftedId>(["frag", "flash", "incendiary"]);
 
 export class GameRoom extends Room<{ input: MoveInput }> {
@@ -310,12 +314,17 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       if (player.slowMs > 0) {
         player.slowMs = Math.max(0, player.slowMs - ctx.dtMs);
       }
+      if (player.wardMs > 0) {
+        player.wardMs = Math.max(0, player.wardMs - ctx.dtMs);
+      }
+      if (player.hasteMs > 0) {
+        player.hasteMs = Math.max(0, player.hasteMs - ctx.dtMs);
+      }
 
       const channel = this.inputs.get(sessionId);
       const command = channel.next();
       if (command) {
-        const speed = player.slowMs > 0 ? PLAYER_SPEED * SLOW_SPEED_FACTOR : PLAYER_SPEED;
-        applyMovement(player, command, ctx.dt, this.liveMap(), PLAYER_RADIUS, speed);
+        applyMovement(player, command, ctx.dt, this.liveMap(), PLAYER_RADIUS, playerMoveSpeed(player));
 
         if (command.gather && !channel.wasIdle && player.held === "arm") {
           this.tryGather(sessionId, player, now);
@@ -434,23 +443,38 @@ export class GameRoom extends Room<{ input: MoveInput }> {
 
   private tryUse(sessionId: string, itemId: string): void {
     const player = this.state.players.get(sessionId);
-    if (!player || !USE_IDS.has(itemId)) {
+    if (!player || !isUseItem(itemId)) {
       return;
     }
 
+    if (player.inventory[itemId] <= 0) {
+      const empty = itemId === "bandage" ? "No bandages" : `No ${getRecipe(itemId)?.name ?? "item"}`;
+      this.clients.get(sessionId)?.send("notice", empty);
+      return;
+    }
+    if (itemId === "bandage" && player.hp >= player.maxHp) {
+      this.clients.get(sessionId)?.send("notice", "Already at full health");
+      return;
+    }
+
+    player.inventory[itemId] -= 1;
     if (itemId === "bandage") {
-      if (player.inventory.bandage <= 0) {
-        this.clients.get(sessionId)?.send("notice", "No bandages");
-        return;
-      }
-      if (player.hp >= player.maxHp) {
-        this.clients.get(sessionId)?.send("notice", "Already at full health");
-        return;
-      }
-      player.inventory.bandage -= 1;
       player.hp = Math.min(player.maxHp, player.hp + BANDAGE_HEAL);
       this.clients.get(sessionId)?.send("notice", `Healed ${BANDAGE_HEAL} HP`);
+      return;
     }
+    if (itemId === "bastion") {
+      player.wardMs = BASTION_MS;
+      this.clients.get(sessionId)?.send("notice", "Bastion Potion is protecting you");
+      return;
+    }
+    if (itemId === "gale") {
+      player.hasteMs = GALE_MS;
+      this.clients.get(sessionId)?.send("notice", "Gale Potion is speeding you up");
+      return;
+    }
+    pushForward(player, RAMSPIKE_DISTANCE);
+    this.clients.get(sessionId)?.send("notice", "Ramspike launched you");
   }
 
   private tryThrow(sessionId: string, itemId: string, now: number): void {
@@ -1042,15 +1066,20 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     player.y = spawn.y;
     player.hp = player.maxHp;
     player.slowMs = 0;
+    player.wardMs = 0;
+    player.hasteMs = 0;
     player.inventory.frag = 0;
     player.inventory.flash = 0;
     player.inventory.incendiary = 0;
     player.inventory.bandage = 0;
+    player.inventory.bastion = 0;
+    player.inventory.gale = 0;
+    player.inventory.ramspike = 0;
     player.armor = 0;
     player.maxArmor = 0;
     player.craftedLight = false;
     player.craftedHeavy = false;
-    if (player.held === "frag" || player.held === "flash" || player.held === "incendiary" || player.held === "bandage") {
+    if (player.held !== "gun" && player.held !== "arm") {
       player.held = "gun";
     }
     this.equipWeapon(player, this.spawnWeaponId.get(sessionId) ?? STARTER_WEAPON_ID);

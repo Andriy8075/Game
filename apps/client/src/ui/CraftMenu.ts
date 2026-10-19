@@ -1,9 +1,9 @@
 import Phaser from "phaser";
-import { MAX_HIRED_BOTS, RECIPES, armorCraftBlock, canAfford, formatCost, isStackedCraft, type ArmorProgress, type StackCounts } from "@io-game/shared";
+import { MAX_HIRED_BOTS, RECIPES, armorCraftBlock, canAfford, formatCost, isStackedCraft, type ArmorProgress, type StackCounts, type UseItemId } from "@io-game/shared";
 
 export type CraftAction =
   | { type: "craft"; recipe: string }
-  | { type: "use"; item: "bandage" }
+  | { type: "use"; item: UseItemId }
   | { type: "hold"; item: "frag" | "flash" | "incendiary" };
 
 type ButtonArt = {
@@ -23,6 +23,9 @@ const EXTRA: Partial<Record<string, { label: string; action: CraftAction }>> = {
   flash: { label: "Hold", action: { type: "hold", item: "flash" } },
   incendiary: { label: "Hold", action: { type: "hold", item: "incendiary" } },
   bandage: { label: "Use", action: { type: "use", item: "bandage" } },
+  bastion: { label: "Use", action: { type: "use", item: "bastion" } },
+  gale: { label: "Use", action: { type: "use", item: "gale" } },
+  ramspike: { label: "Use", action: { type: "use", item: "ramspike" } },
 };
 
 export class CraftMenu {

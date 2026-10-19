@@ -2,6 +2,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ColyseusTestServer } from "@colyseus/testing";
 import {
   BANDAGE_HEAL,
+  BASTION_DAMAGE_FACTOR,
+  BASTION_MS,
   BOT_DAMAGE,
   BOT_MAX_HP,
   BOT_SPEED,
@@ -10,6 +12,8 @@ import {
   FLASH_SLOW_MS,
   FRAG_DAMAGE,
   FRAG_RADIUS,
+  GALE_MS,
+  GALE_SPEED_FACTOR,
   GAME_ROOM_NAME,
   HARVEST,
   HEAVY_ARMOR,
@@ -19,6 +23,8 @@ import {
   PLAYER_DAMAGE,
   PLAYER_MAX_HP,
   PLAYER_RADIUS,
+  PLAYER_SPEED,
+  RAMSPIKE_DISTANCE,
   SLOW_SPEED_FACTOR,
   STARTER_WEAPON_ID,
   THROW_COOLDOWN_MS,
@@ -62,7 +68,7 @@ describe("gather, craft, and combat", () => {
     const client = await colyseus.connectTo(room);
     const player = requirePlayer(room, client.sessionId);
 
-    for (const slot of ["frag", "flash", "incendiary", "bandage", "wall", "arm", "gun"] as const) {
+    for (const slot of ["frag", "flash", "incendiary", "bandage", "bastion", "gale", "ramspike", "wall", "arm", "gun"] as const) {
       sendMessage(client, "hold", slot);
       await waitTicks(room, 1);
       expect(player.held).toBe(slot);
@@ -500,6 +506,7 @@ describe("gather, craft, and combat", () => {
     expect(target.craftedLight).toBe(true);
   });
 
+
   it("places a barricade in front of the aim and spends wood, stone, or iron", async () => {
     const room = await openRoom();
     const client = await colyseus.connectTo(room);
@@ -792,6 +799,112 @@ describe("gather, craft, and combat", () => {
     await waitTicks(room, 1);
     expect(room.state.bots.size).toBe(0);
     expect(room.state.players.has(enemyClient.sessionId)).toBe(true);
+  });
+
+
+  it("crafts Bastion Potion and Gale Potion, then spends them on protection and speed", async () => {
+    const room = await openRoom();
+    const client = await colyseus.connectTo(room);
+    const shooterClient = await colyseus.connectTo(room);
+    const player = requirePlayer(room, client.sessionId);
+    const shooter = requirePlayer(room, shooterClient.sessionId);
+
+    player.inventory.wood = 2;
+    player.inventory.stone = 2;
+    player.inventory.iron = 2;
+    player.inventory.gold = 1;
+    sendMessage(client, "craft", "bastion");
+    sendMessage(client, "craft", "gale");
+    await waitTicks(room, 2);
+    expect(player.inventory.bastion).toBe(1);
+    expect(player.inventory.gale).toBe(1);
+    expect(player.inventory.wood).toBe(0);
+    expect(player.inventory.stone).toBe(0);
+    expect(player.inventory.iron).toBe(0);
+    expect(player.inventory.gold).toBe(0);
+
+    sendMessage(client, "use", "bastion");
+    sendMessage(client, "use", "gale");
+    await waitTicks(room, 2);
+    expect(player.inventory.bastion).toBe(0);
+    expect(player.inventory.gale).toBe(0);
+    expect(player.wardMs).toBeGreaterThan(BASTION_MS - 200);
+    expect(player.hasteMs).toBeGreaterThan(GALE_MS - 200);
+
+    player.x = 200;
+    player.y = 1500;
+    sendMove(client, 0, 0);
+    await waitTicks(room, 1);
+    const start = player.x;
+    for (let step = 0; step < 20; step += 1) {
+      sendMove(client, 1, 0);
+      await waitTicks(room, 1);
+    }
+    const gained = player.x - start;
+    const boosted = PLAYER_SPEED * GALE_SPEED_FACTOR * 20 / TICK_RATE;
+    expect(gained).toBeGreaterThan(PLAYER_SPEED * 20 / TICK_RATE);
+    expect(gained).toBeLessThan(boosted + 12);
+
+    sendMove(client, 0, 0);
+    placeDuel(shooter, player);
+    await waitTicks(room, 4);
+    sendShot(shooterClient, 0);
+    await waitTicks(room, 4);
+    expect(player.hp).toBe(PLAYER_MAX_HP - Math.max(1, Math.round(PLAYER_DAMAGE * BASTION_DAMAGE_FACTOR)));
+  });
+
+  it("crafts one Ramspike, shoves the player forward, and drops the new gear on death", async () => {
+    const room = await openRoom();
+    const client = await colyseus.connectTo(room);
+    const shooterClient = await colyseus.connectTo(room);
+    const player = requirePlayer(room, client.sessionId);
+    const shooter = requirePlayer(room, shooterClient.sessionId);
+
+    player.inventory.stone = 2;
+    player.inventory.iron = 2;
+    sendMessage(client, "craft", "ramspike");
+    await waitTicks(room, 2);
+    expect(player.inventory.ramspike).toBe(1);
+    expect(player.inventory.stone).toBe(0);
+    expect(player.inventory.iron).toBe(0);
+
+    player.x = 200;
+    player.y = 1500;
+    player.angle = 0;
+    sendMessage(client, "use", "ramspike");
+    await waitTicks(room, 2);
+    expect(player.inventory.ramspike).toBe(0);
+    expect(player.x).toBeGreaterThan(200 + RAMSPIKE_DISTANCE - 30);
+    expect(player.x).toBeLessThan(200 + RAMSPIKE_DISTANCE + 8);
+    expect(player.y).toBeCloseTo(1500, 0);
+
+    const parked = player.x;
+    sendMessage(client, "use", "ramspike");
+    await waitTicks(room, 2);
+    expect(player.x).toBeCloseTo(parked, 4);
+
+    player.inventory.bastion = 2;
+    player.inventory.gale = 2;
+    player.inventory.ramspike = 2;
+    player.wardMs = 4000;
+    player.hasteMs = 4000;
+    player.held = "ramspike";
+    player.hp = Math.max(1, Math.round(PLAYER_DAMAGE * BASTION_DAMAGE_FACTOR));
+    player.armor = 0;
+    sendMove(client, 0, 0);
+    placeDuel(shooter, player);
+    await waitTicks(room, 4);
+    sendShot(shooterClient, 0);
+    await waitTicks(room, 4);
+
+    expect(player.hp).toBe(PLAYER_MAX_HP);
+    expect(player.inventory.bastion).toBe(0);
+    expect(player.inventory.gale).toBe(0);
+    expect(player.inventory.ramspike).toBe(0);
+    expect(player.wardMs).toBe(0);
+    expect(player.hasteMs).toBe(0);
+    expect(player.held).toBe("gun");
+
   });
 });
 

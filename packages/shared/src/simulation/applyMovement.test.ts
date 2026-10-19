@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PLAYER_RADIUS, PLAYER_SPEED } from "../constants";
-import { applyMovement } from "./applyMovement";
+import { applyMovement, pushForward } from "./applyMovement";
 import { isBlocked, resolveCollisions } from "./collision";
 import { getObstacle } from "../world/map";
 
@@ -35,6 +35,19 @@ describe("applyMovement", () => {
       applyMovement(second, { moveX: 1, moveY: 0, aimAngle: 0.25 }, 1 / 30);
     }
     expect(first).toEqual(second);
+  });
+
+  it("shoves the body forward and stops at the map edge", () => {
+    const open = pushForward({ x: 200, y: 200, angle: 0 }, 120);
+    expect(open.x).toBeGreaterThan(310);
+    expect(open.x).toBeLessThan(325);
+    expect(open.y).toBeCloseTo(200, 0);
+    expect(isBlocked(open.x, open.y)).toBe(false);
+
+    const blocked = pushForward({ x: 200, y: 200, angle: Math.PI }, 800);
+    expect(blocked.x).toBeGreaterThanOrEqual(PLAYER_RADIUS);
+    expect(blocked.x).toBeLessThan(80);
+    expect(isBlocked(blocked.x, blocked.y)).toBe(false);
   });
 
   it("cannot walk through buildings", () => {

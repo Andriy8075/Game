@@ -22,6 +22,7 @@ export class WeaponMenu {
   private readonly armorText: Phaser.GameObjects.Text;
   private originX = 0;
   private originY = 0;
+  private slotWidth = SLOT_W;
   private gunId: string;
 
   constructor(private readonly scene: Phaser.Scene, weaponId: string) {
@@ -63,12 +64,16 @@ export class WeaponMenu {
   }
 
   layout(width: number, height: number): void {
-    const barWidth = HELD_SLOTS.length * SLOT_W + (HELD_SLOTS.length - 1) * GAP;
-    const total = barWidth + GAP + 108;
+    const armorW = 108;
+    const gaps = (HELD_SLOTS.length - 1) * GAP;
+    const available = Math.max(HELD_SLOTS.length * 58, width - 32 - armorW - GAP);
+    this.slotWidth = Math.min(SLOT_W, (available - gaps) / HELD_SLOTS.length);
+    const barWidth = HELD_SLOTS.length * this.slotWidth + gaps;
+    const total = barWidth + GAP + armorW;
     this.originX = Math.max(16, (width - total) / 2);
     this.originY = Math.max(16, height - SLOT_H - 16);
     for (let index = 0; index < this.slots.length; index += 1) {
-      const x = this.originX + index * (SLOT_W + GAP);
+      const x = this.originX + index * (this.slotWidth + GAP);
       const rect = this.slots[index];
       const number = this.numbers[index];
       const label = this.labels[index];
@@ -76,10 +81,12 @@ export class WeaponMenu {
       if (!rect || !number || !label || !icon) {
         continue;
       }
+      rect.setSize(this.slotWidth, SLOT_H);
       rect.setPosition(x, this.originY);
       number.setPosition(x + 5, this.originY + 3);
-      icon.setPosition(x + SLOT_W / 2, this.originY + 28);
-      label.setPosition(x + SLOT_W / 2, this.originY + SLOT_H - 4);
+      icon.setPosition(x + this.slotWidth / 2, this.originY + 28);
+      label.setPosition(x + this.slotWidth / 2, this.originY + SLOT_H - 4);
+      this.fitLabel(label);
     }
     const armorX = this.originX + barWidth + GAP;
     this.armorChip.setPosition(armorX, this.originY);
@@ -143,7 +150,7 @@ export class WeaponMenu {
 
   private fitLabel(label: Phaser.GameObjects.Text): void {
     label.setScale(1);
-    const max = SLOT_W - 10;
+    const max = this.slotWidth - 10;
     if (label.width > max) {
       label.setScale(max / label.width);
     }

@@ -25,6 +25,15 @@ export const BANDAGE_HEAL = 40;
 export const LIGHT_ARMOR = 40;
 export const HEAVY_ARMOR = 80;
 
+/** Bastion Potion cuts incoming damage in half while the draught lasts. */
+export const BASTION_MS = 6000;
+export const BASTION_DAMAGE_FACTOR = 0.5;
+/** Gale Potion raises move speed until the draught wears off. */
+export const GALE_MS = 5000;
+export const GALE_SPEED_FACTOR = 1.55;
+/** Ramspike is a single shove along the player's aim. */
+export const RAMSPIKE_DISTANCE = 280;
+
 export const THROW_COOLDOWN_MS = 600;
 export const GRENADE_SPEED = 420;
 export const GRENADE_FUSE_MS = 850;

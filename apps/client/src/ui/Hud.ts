@@ -26,7 +26,7 @@ export class Hud {
     this.resources = this.pin(scene.add.text(16, 88, "", { ...STYLE, color: "#fff8e1", backgroundColor: "#00000066", padding: { x: 8, y: 6 } }));
     this.items = this.pin(scene.add.text(16, 124, "", { ...STYLE, color: "#dce7d4", backgroundColor: "#00000066", padding: { x: 8, y: 6 } }));
     this.held = this.pin(scene.add.text(16, 160, "Holding Gun", { ...STYLE, color: "#ffe082", backgroundColor: "#00000088", padding: { x: 8, y: 6 } }));
-    this.pin(scene.add.text(16, 196, "WASD move · walk over a weapon to equip it · 1-7 or wheel selects gun, grenades, bandage, barricade, arm · click uses · C craft", {
+    this.pin(scene.add.text(16, 196, "WASD move · walk over a weapon to equip it · 1-9 or wheel selects a slot · click uses · C craft", {
       ...STYLE,
       fontSize: "13px",
       color: "#dce7d4",
@@ -104,9 +104,11 @@ export class Hud {
     this.status.setText(text);
   }
 
-  setVitals(hp: number, maxHp: number, armor: number, maxArmor: number, damage: number): void {
+  setVitals(hp: number, maxHp: number, armor: number, maxArmor: number, damage: number, wardMs = 0, hasteMs = 0): void {
     const armorText = maxArmor > 0 ? `   ARM ${Math.ceil(armor)}/${maxArmor}` : "";
-    this.vitals.setText(`HP ${Math.ceil(hp)}/${maxHp}${armorText}   DMG ${damage}`);
+    const wardText = wardMs > 0 ? `   Ward ${Math.ceil(wardMs / 1000)}s` : "";
+    const hasteText = hasteMs > 0 ? `   Haste ${Math.ceil(hasteMs / 1000)}s` : "";
+    this.vitals.setText(`HP ${Math.ceil(hp)}/${maxHp}${armorText}   DMG ${damage}${wardText}${hasteText}`);
   }
 
   setHeld(slot: HeldSlot, detail = ""): void {
@@ -116,7 +118,7 @@ export class Hud {
 
   setInventory(inventory: StackCounts): void {
     this.resources.setText(`Wood ${inventory.wood}   Stone ${inventory.stone}   Iron ${inventory.iron}   Gold ${inventory.gold}`);
-    this.items.setText(`Frag ${inventory.frag}   Flash ${inventory.flash}   Fire ${inventory.incendiary}   Bandage ${inventory.bandage}`);
+    this.items.setText(`Frag ${inventory.frag}   Flash ${inventory.flash}   Fire ${inventory.incendiary}   Bandage ${inventory.bandage}   Bastion ${inventory.bastion}   Gale ${inventory.gale}   Ramspike ${inventory.ramspike}`);
   }
 
   setPrompt(text: string): void {

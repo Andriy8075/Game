@@ -1,9 +1,19 @@
-import { BANDAGE_HEAL, GATHER_REACH, HEAVY_ARMOR, LIGHT_ARMOR, PLAYER_RADIUS } from "../constants";
+import {
+  BANDAGE_HEAL,
+  BASTION_DAMAGE_FACTOR,
+  GALE_SPEED_FACTOR,
+  GATHER_REACH,
+  HEAVY_ARMOR,
+  LIGHT_ARMOR,
+  PLAYER_RADIUS,
+  PLAYER_SPEED,
+  SLOW_SPEED_FACTOR,
+} from "../constants";
 import { type WeaponId } from "../weapons/catalog";
 import { GAME_MAP, isHarvestable, type CircleObstacle, type GameMap, type HarvestKind } from "../world/map";
 
 export const RESOURCE_IDS = ["wood", "stone", "iron", "gold"] as const;
-export const CRAFTED_IDS = ["frag", "flash", "incendiary", "bandage", "lightArmor", "heavyArmor"] as const;
+export const CRAFTED_IDS = ["frag", "flash", "incendiary", "bandage", "bastion", "gale", "ramspike", "lightArmor", "heavyArmor"] as const;
 
 export type ResourceId = (typeof RESOURCE_IDS)[number];
 export type CraftedId = (typeof CRAFTED_IDS)[number];
@@ -85,6 +95,9 @@ export const RECIPES: readonly Recipe[] = [
   { id: "flash", name: "Flash Grenade", blurb: "Slows nearby players.", cost: { stone: 1, gold: 1 } },
   { id: "incendiary", name: "Fire Grenade", blurb: "Leaves a burning patch.", cost: { wood: 2, iron: 1 } },
   { id: "bandage", name: "Bandage", blurb: `Heals ${BANDAGE_HEAL} HP.`, cost: { wood: 2 } },
+  { id: "bastion", name: "Bastion Potion", blurb: "Halves incoming damage for 6 seconds.", cost: { stone: 2, iron: 2 } },
+  { id: "gale", name: "Gale Potion", blurb: "Raises move speed for 5 seconds.", cost: { wood: 2, gold: 1 } },
+  { id: "ramspike", name: "Ramspike", blurb: "One shove toward your aim.", cost: { stone: 2, iron: 2 } },
   { id: "lightArmor", name: "Light Armor", blurb: `Absorbs ${LIGHT_ARMOR} damage. Equips immediately, once per life.`, cost: { iron: 4, stone: 3 } },
   { id: "heavyArmor", name: "Heavy Armor", blurb: `Absorbs ${HEAVY_ARMOR} damage. Equips immediately and replaces light armor.`, cost: { iron: 5, gold: 3 } },
   { id: "forge-cannon", name: "Forge Cannon", blurb: "A heavy crafted gun for this life.", cost: { iron: 6, gold: 4 }, weaponId: "forge" },
@@ -98,7 +111,7 @@ export const GRENADE_KIND = {
   incendiary: 2,
 } as const;
 
-export const HELD_SLOTS = ["gun", "frag", "flash", "incendiary", "bandage", "wall", "arm"] as const;
+export const HELD_SLOTS = ["gun", "frag", "flash", "incendiary", "bandage", "bastion", "gale", "ramspike", "wall", "arm"] as const;
 export type HeldSlot = (typeof HELD_SLOTS)[number];
 
 export const HELD_LABELS: Record<HeldSlot, string> = {
@@ -107,6 +120,9 @@ export const HELD_LABELS: Record<HeldSlot, string> = {
   flash: "Flash Grenade",
   incendiary: "Fire Grenade",
   bandage: "Bandage",
+  bastion: "Bastion Potion",
+  gale: "Gale Potion",
+  ramspike: "Ramspike",
   wall: "Barricade",
   arm: "Arm",
 };
@@ -117,9 +133,15 @@ export const HELD_SHORT: Record<HeldSlot, string> = {
   flash: "Flash",
   incendiary: "Fire",
   bandage: "Bandage",
+  bastion: "Bastion",
+  gale: "Gale",
+  ramspike: "Spike",
   wall: "Barricade",
   arm: "Arm",
 };
+
+export const USE_ITEM_IDS = ["bandage", "bastion", "gale", "ramspike"] as const;
+export type UseItemId = (typeof USE_ITEM_IDS)[number];
 
 export type ArmorProgress = {
   craftedLight: boolean;
@@ -150,8 +172,23 @@ export function isGrenadeSlot(id: HeldSlot): id is "frag" | "flash" | "incendiar
   return id === "frag" || id === "flash" || id === "incendiary";
 }
 
-export function isStackedCraft(id: string): id is "frag" | "flash" | "incendiary" | "bandage" {
-  return id === "frag" || id === "flash" || id === "incendiary" || id === "bandage";
+export function isUseItem(id: string): id is UseItemId {
+  return (USE_ITEM_IDS as readonly string[]).includes(id);
+}
+
+export function isStackedCraft(id: string): id is "frag" | "flash" | "incendiary" | "bandage" | "bastion" | "gale" | "ramspike" {
+  return id === "frag" || id === "flash" || id === "incendiary" || id === "bandage" || id === "bastion" || id === "gale" || id === "ramspike";
+}
+
+export function playerMoveSpeed(status: { slowMs?: number; hasteMs?: number }): number {
+  let speed = PLAYER_SPEED;
+  if ((status.slowMs ?? 0) > 0) {
+    speed *= SLOW_SPEED_FACTOR;
+  }
+  if ((status.hasteMs ?? 0) > 0) {
+    speed *= GALE_SPEED_FACTOR;
+  }
+  return speed;
 }
 
 export function getRecipe(id: string): Recipe | undefined {
@@ -201,10 +238,13 @@ export function nearestHarvestable(
   return best;
 }
 
-export function applyDamage(target: { hp: number; armor: number }, amount: number): void {
-  const absorbed = Math.min(Math.max(0, target.armor), Math.max(0, amount));
+export function applyDamage(target: { hp: number; armor: number; wardMs?: number }, amount: number): void {
+  const incoming = (target.wardMs ?? 0) > 0 && amount > 0
+    ? Math.max(1, Math.round(amount * BASTION_DAMAGE_FACTOR))
+    : amount;
+  const absorbed = Math.min(Math.max(0, target.armor), Math.max(0, incoming));
   target.armor -= absorbed;
-  target.hp = Math.max(0, target.hp - (amount - absorbed));
+  target.hp = Math.max(0, target.hp - (incoming - absorbed));
 }
 
 export function blastDamage(distance: number, radius: number, damage: number): number {

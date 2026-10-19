@@ -1,13 +1,16 @@
 import Phaser from "phaser";
 import arm from "../assets/slots/arm.svg?raw";
 import bandage from "../assets/slots/bandage.svg?raw";
+import bastion from "../assets/slots/bastion.svg?raw";
 import buckshot from "../assets/slots/buckshot.svg?raw";
 import flash from "../assets/slots/flash.svg?raw";
 import forge from "../assets/slots/forge.svg?raw";
 import frag from "../assets/slots/frag.svg?raw";
+import gale from "../assets/slots/gale.svg?raw";
 import horizon from "../assets/slots/horizon.svg?raw";
 import incendiary from "../assets/slots/incendiary.svg?raw";
 import longshot from "../assets/slots/longshot.svg?raw";
+import ramspike from "../assets/slots/ramspike.svg?raw";
 import repeater from "../assets/slots/repeater.svg?raw";
 import sidearm from "../assets/slots/sidearm.svg?raw";
 import splinter from "../assets/slots/splinter.svg?raw";
@@ -32,6 +35,9 @@ const SLOT_SVGS: Record<string, string> = {
   flash,
   incendiary,
   bandage,
+  bastion,
+  gale,
+  ramspike,
   wall,
   arm,
 };
