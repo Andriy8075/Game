@@ -1,5 +1,6 @@
 import Phaser from "phaser";
-import { HELD_SHORT, HELD_SLOTS, type HeldSlot } from "@io-game/shared";
+import { HELD_SHORT, HELD_SLOTS, getWeapon, type HeldSlot } from "@io-game/shared";
+import { applySlotIcon, blankSlotTexture } from "./slotIcons";
 
 const STYLE = {
   fontFamily: "Segoe UI, sans-serif",
@@ -7,31 +8,46 @@ const STYLE = {
   color: "#f5f5f5",
 } as const;
 
-const SLOT_W = 76;
-const SLOT_H = 48;
+const SLOT_W = 92;
+const SLOT_H = 66;
 const GAP = 6;
+const LABEL_SIZE = "11px";
 
 export class WeaponMenu {
   private readonly slots: Phaser.GameObjects.Rectangle[] = [];
   private readonly labels: Phaser.GameObjects.Text[] = [];
   private readonly numbers: Phaser.GameObjects.Text[] = [];
+  private readonly icons: Phaser.GameObjects.Image[] = [];
   private readonly armorChip: Phaser.GameObjects.Rectangle;
   private readonly armorText: Phaser.GameObjects.Text;
   private originX = 0;
   private originY = 0;
+  private gunId: string;
 
-  constructor(private readonly scene: Phaser.Scene) {
+  constructor(private readonly scene: Phaser.Scene, weaponId: string) {
+    this.gunId = getWeapon(weaponId).id;
     for (let index = 0; index < HELD_SLOTS.length; index += 1) {
       const slot = HELD_SLOTS[index] ?? "gun";
       const rect = scene.add.rectangle(0, 0, SLOT_W, SLOT_H, 0x263238);
       rect.setStrokeStyle(2, 0xc8e6c9);
       rect.setOrigin(0, 0);
-      const number = scene.add.text(0, 0, String(index + 1), { ...STYLE, fontSize: "12px", color: "#ffe082" });
-      const label = scene.add.text(0, 0, HELD_SHORT[slot], { ...STYLE, fontSize: "14px" });
+      const icon = scene.add.image(0, 0, blankSlotTexture(scene));
+      icon.setOrigin(0.5, 0.5);
+      const number = scene.add.text(0, 0, String(index + 1), { ...STYLE, fontSize: "11px", color: "#ffe082" });
+      const label = scene.add.text(0, 0, this.slotLabel(slot), {
+        ...STYLE,
+        fontSize: LABEL_SIZE,
+        align: "center",
+      });
+      label.setOrigin(0.5, 1);
+      this.fitLabel(label);
+      applySlotIcon(scene, icon, slot === "gun" ? this.gunId : slot);
       this.pin(rect);
+      this.pin(icon);
       this.pin(number);
       this.pin(label);
       this.slots.push(rect);
+      this.icons.push(icon);
       this.numbers.push(number);
       this.labels.push(label);
     }
@@ -56,16 +72,35 @@ export class WeaponMenu {
       const rect = this.slots[index];
       const number = this.numbers[index];
       const label = this.labels[index];
-      if (!rect || !number || !label) {
+      const icon = this.icons[index];
+      if (!rect || !number || !label || !icon) {
         continue;
       }
       rect.setPosition(x, this.originY);
-      number.setPosition(x + 6, this.originY + 4);
-      label.setPosition(x + 8, this.originY + 22);
+      number.setPosition(x + 5, this.originY + 3);
+      icon.setPosition(x + SLOT_W / 2, this.originY + 28);
+      label.setPosition(x + SLOT_W / 2, this.originY + SLOT_H - 4);
     }
     const armorX = this.originX + barWidth + GAP;
     this.armorChip.setPosition(armorX, this.originY);
-    this.armorText.setPosition(armorX + 10, this.originY + 6);
+    this.armorText.setPosition(armorX + 10, this.originY + 16);
+  }
+
+  setGun(weaponId: string): void {
+    const weapon = getWeapon(weaponId);
+    if (weapon.id === this.gunId) {
+      return;
+    }
+    this.gunId = weapon.id;
+    const label = this.labels[0];
+    const icon = this.icons[0];
+    if (label) {
+      label.setText(weapon.name);
+      this.fitLabel(label);
+    }
+    if (icon) {
+      applySlotIcon(this.scene, icon, weapon.id);
+    }
   }
 
   setSelected(slot: HeldSlot): void {
@@ -100,6 +135,18 @@ export class WeaponMenu {
       }
     }
     return undefined;
+  }
+
+  private slotLabel(slot: HeldSlot): string {
+    return slot === "gun" ? getWeapon(this.gunId).name : HELD_SHORT[slot];
+  }
+
+  private fitLabel(label: Phaser.GameObjects.Text): void {
+    label.setScale(1);
+    const max = SLOT_W - 10;
+    if (label.width > max) {
+      label.setScale(max / label.width);
+    }
   }
 
   private pin<T extends Phaser.GameObjects.GameObject>(object: T): T {

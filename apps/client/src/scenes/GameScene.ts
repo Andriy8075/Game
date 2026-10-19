@@ -119,7 +119,7 @@ export class GameScene extends Phaser.Scene {
     drawWorld(this);
     this.actors = new ActorsView(this);
     this.hud = new Hud(this);
-    this.weaponMenu = new WeaponMenu(this);
+    this.weaponMenu = new WeaponMenu(this, this.weaponId);
     this.craftMenu = new CraftMenu(this, (action) => this.sendAction(action));
     const keyboard = this.input.keyboard!;
     this.keys = keyboard.addKeys({
@@ -271,6 +271,7 @@ export class GameScene extends Phaser.Scene {
         const inventory = player.inventory ?? EMPTY_INVENTORY;
         const weapon = getWeapon(player.weaponId);
         this.hud.setHeld(this.held, this.held === "gun" ? formatWeaponStats(weapon) : "");
+        this.weaponMenu.setGun(weapon.id);
         this.weaponMenu.setSelected(this.held);
         this.weaponMenu.setArmor(
           player.craftedHeavy ? "Heavy" : player.craftedLight ? "Light" : "None",
