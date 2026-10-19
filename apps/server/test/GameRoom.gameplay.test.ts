@@ -15,12 +15,14 @@ import {
   PLAYER_MAX_HP,
   PLAYER_RADIUS,
   SLOW_SPEED_FACTOR,
+  THROW_COOLDOWN_MS,
   TICK_RATE,
   getObstacle,
   type CircleObstacle,
 } from "@io-game/shared";
 import { createGameServer } from "../src/app.config";
-import type { GameState } from "../src/rooms/schema/GameState";
+import { GameRoom } from "../src/rooms/GameRoom";
+import { waitTicks } from "./clock";
 
 const GATHER_GAP_TICKS = 16;
 
@@ -44,8 +46,12 @@ describe("gather, craft, and combat", () => {
     await colyseus.cleanup();
   });
 
+  function openRoom(): Promise<GameRoom> {
+    return colyseus.createRoom(GAME_ROOM_NAME, { manualTime: true }) as Promise<GameRoom>;
+  }
+
   it("switches between the gun, grenades, bandage, and arm, and ignores armor", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const client = await colyseus.connectTo(room);
     const player = requirePlayer(room, client.sessionId);
 
@@ -63,7 +69,7 @@ describe("gather, craft, and combat", () => {
   });
 
   it("puts wood, stone, iron, and gold into the inventory only while the arm is out", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const client = await colyseus.connectTo(room);
     const player = requirePlayer(room, client.sessionId);
     const nodes = [node("tree-1"), node("stone-1"), node("iron-1"), node("gold-1")];
@@ -88,7 +94,7 @@ describe("gather, craft, and combat", () => {
   });
 
   it("waits out the gather cooldown and stops when the node is empty", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const client = await colyseus.connectTo(room);
     const player = requirePlayer(room, client.sessionId);
     const gold = node("gold-1");
@@ -117,7 +123,7 @@ describe("gather, craft, and combat", () => {
   });
 
   it("grows a depleted gold vein back", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const client = await colyseus.connectTo(room);
     const player = requirePlayer(room, client.sessionId);
     const gold = node("gold-1");
@@ -130,10 +136,10 @@ describe("gather, craft, and combat", () => {
     const ticks = Math.ceil(HARVEST.gold.respawnMs / (1000 / TICK_RATE)) + 2;
     await waitTicks(room, ticks);
     expect(room.state.nodes.get(gold.id)?.remaining).toBe(HARVEST.gold.charges);
-  }, 40_000);
+  });
 
   it("does not shoot while the arm or a grenade is selected", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const shooterClient = await colyseus.connectTo(room);
     const targetClient = await colyseus.connectTo(room);
     const shooter = requirePlayer(room, shooterClient.sessionId);
@@ -160,7 +166,7 @@ describe("gather, craft, and combat", () => {
   });
 
   it("crafts grenades and bandages only when every resource is paid", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const client = await colyseus.connectTo(room);
     const player = requirePlayer(room, client.sessionId);
 
@@ -192,7 +198,7 @@ describe("gather, craft, and combat", () => {
   });
 
   it("heals with a bandage, caps at full health, and keeps the bandage when it cannot be used", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const client = await colyseus.connectTo(room);
     const player = requirePlayer(room, client.sessionId);
 
@@ -223,7 +229,7 @@ describe("gather, craft, and combat", () => {
   });
 
   it("does not equip armor by using an inventory stack", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const client = await colyseus.connectTo(room);
     const player = requirePlayer(room, client.sessionId);
 
@@ -236,7 +242,7 @@ describe("gather, craft, and combat", () => {
   });
 
   it("throws a frag only from the hand and deals full damage at the blast center", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const throwerClient = await colyseus.connectTo(room);
     const targetClient = await colyseus.connectTo(room);
     const thrower = requirePlayer(room, throwerClient.sessionId);
@@ -276,7 +282,7 @@ describe("gather, craft, and combat", () => {
   });
 
   it("slows players inside a flash blast and leaves others alone", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const throwerClient = await colyseus.connectTo(room);
     const caughtClient = await colyseus.connectTo(room);
     const safeClient = await colyseus.connectTo(room);
@@ -321,7 +327,7 @@ describe("gather, craft, and combat", () => {
   });
 
   it("burns players standing in an incendiary patch", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const throwerClient = await colyseus.connectTo(room);
     const targetClient = await colyseus.connectTo(room);
     const thrower = requirePlayer(room, throwerClient.sessionId);
@@ -346,7 +352,7 @@ describe("gather, craft, and combat", () => {
   });
 
   it("refuses a second throw until the cooldown has passed", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const client = await colyseus.connectTo(room);
     const player = requirePlayer(room, client.sessionId);
     player.x = 200;
@@ -363,14 +369,15 @@ describe("gather, craft, and combat", () => {
     expect(player.inventory.frag).toBe(1);
     expect(room.state.grenades.size).toBe(1);
 
-    await new Promise((resolve) => setTimeout(resolve, 700));
+    const cooldownTicks = Math.ceil(THROW_COOLDOWN_MS / (1000 / TICK_RATE)) + 2;
+    await waitTicks(room, cooldownTicks);
     sendMessage(client, "throw", "frag");
     await waitTicks(room, 2);
     expect(player.inventory.frag).toBe(0);
   });
 
   it("farms stone and iron, crafts a frag, and damages a player with it", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const minerClient = await colyseus.connectTo(room);
     const targetClient = await colyseus.connectTo(room);
     const miner = requirePlayer(room, minerClient.sessionId);
@@ -410,7 +417,7 @@ describe("gather, craft, and combat", () => {
   });
 
   it("farms wood, crafts a bandage, and heals a gunshot", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const minerClient = await colyseus.connectTo(room);
     const shooterClient = await colyseus.connectTo(room);
     const miner = requirePlayer(room, minerClient.sessionId);
@@ -439,7 +446,7 @@ describe("gather, craft, and combat", () => {
   });
 
   it("restores crafted heavy armor after the wearer is downed", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const shooterClient = await colyseus.connectTo(room);
     const targetClient = await colyseus.connectTo(room);
     const shooter = requirePlayer(room, shooterClient.sessionId);
@@ -480,10 +487,7 @@ type InputClient = {
   send: (type: string, payload?: unknown) => void;
 };
 
-type RoomState = {
-  state: GameState;
-  waitForNextTimestep: () => Promise<void>;
-};
+type RoomState = GameRoom;
 
 function requirePlayer(room: RoomState, sessionId: string) {
   const player = room.state.players.get(sessionId);
@@ -578,18 +582,12 @@ function sendShot(client: InputClient, aimAngle: number): void {
   input.send();
 }
 
-async function waitTicks(room: { waitForNextTimestep: () => Promise<void> }, ticks: number): Promise<void> {
-  for (let i = 0; i < ticks; i += 1) {
-    await room.waitForNextTimestep();
-  }
-}
-
-async function waitUntil(room: { waitForNextTimestep: () => Promise<void> }, ready: () => boolean): Promise<void> {
+async function waitUntil(room: GameRoom, ready: () => boolean): Promise<void> {
   for (let i = 0; i < 80; i += 1) {
     if (ready()) {
       return;
     }
-    await room.waitForNextTimestep();
+    await waitTicks(room, 1);
   }
   throw new Error("timed out waiting for the room");
 }

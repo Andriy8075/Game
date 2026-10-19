@@ -17,7 +17,8 @@ import {
   weaponsForSource,
 } from "@io-game/shared";
 import { createGameServer } from "../src/app.config";
-import type { GameState } from "../src/rooms/schema/GameState";
+import { GameRoom } from "../src/rooms/GameRoom";
+import { flush, waitTicks } from "./clock";
 
 describe("GameRoom", () => {
   let colyseus: ColyseusTestServer;
@@ -39,8 +40,12 @@ describe("GameRoom", () => {
     await colyseus.cleanup();
   });
 
+  function openRoom(): Promise<GameRoom> {
+    return colyseus.createRoom(GAME_ROOM_NAME, { manualTime: true }) as Promise<GameRoom>;
+  }
+
   it("joins a player into the room", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const client = await colyseus.connectTo(room);
 
     expect(client.sessionId).toBeTruthy();
@@ -66,16 +71,16 @@ describe("GameRoom", () => {
   });
 
   it("removes a player when they leave", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const client = await colyseus.connectTo(room);
     await client.leave(true);
-    await waitTicks(room, 3);
+    await flush();
 
     expect(room.state.players.has(client.sessionId)).toBe(false);
   });
 
   it("moves the player from authoritative input", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const client = await colyseus.connectTo(room);
     const player = room.state.players.get(client.sessionId);
     if (!player) {
@@ -93,7 +98,7 @@ describe("GameRoom", () => {
   });
 
   it("rejects speed hacks by clamping movement axes", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const honestClient = await colyseus.connectTo(room);
     const cheaterClient = await colyseus.connectTo(room);
     const honest = room.state.players.get(honestClient.sessionId);
@@ -115,7 +120,7 @@ describe("GameRoom", () => {
   });
 
   it("stops players from walking through buildings", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const client = await colyseus.connectTo(room);
     const player = room.state.players.get(client.sessionId);
     const building = getObstacle("hq");
@@ -133,7 +138,7 @@ describe("GameRoom", () => {
   });
 
   it("applies hitscan damage with a clear line of sight", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const shooterClient = await colyseus.connectTo(room);
     const targetClient = await colyseus.connectTo(room);
     const shooter = room.state.players.get(shooterClient.sessionId);
@@ -156,7 +161,7 @@ describe("GameRoom", () => {
   });
 
   it("blocks shots with buildings", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const shooterClient = await colyseus.connectTo(room);
     const targetClient = await colyseus.connectTo(room);
     const shooter = room.state.players.get(shooterClient.sessionId);
@@ -190,7 +195,7 @@ describe("GameRoom", () => {
   });
 
   it("equips a weapon when the player stands on its pickup", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const client = await colyseus.connectTo(room);
     const player = room.state.players.get(client.sessionId);
     const pickup = [...room.state.pickups.values()][0];
@@ -209,7 +214,7 @@ describe("GameRoom", () => {
   });
 
   it("respects the equipped weapon fire cooldown", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const shooterClient = await colyseus.connectTo(room);
     const targetClient = await colyseus.connectTo(room);
     const shooter = room.state.players.get(shooterClient.sessionId);
@@ -235,10 +240,7 @@ describe("GameRoom", () => {
     expect(target.hp).toBe(startHp - sidearm.damage);
     expect(shooter.weaponId).toBe(STARTER_WEAPON_ID);
 
-    for (let i = 0; i < 10; i += 1) {
-      sendMove(shooterClient, 0, 0);
-      await room.waitForNextTimestep();
-    }
+    await waitTicks(room, 10);
 
     sendShot(shooterClient, 0);
     await waitTicks(room, 2);
@@ -246,7 +248,7 @@ describe("GameRoom", () => {
   });
 
   it("gathers wood from a nearby tree and ignores far nodes", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const client = await colyseus.connectTo(room);
     const player = room.state.players.get(client.sessionId);
     const tree = getObstacle("tree-1");
@@ -280,7 +282,7 @@ describe("GameRoom", () => {
   });
 
   it("crafts a bandage from wood and heals with it", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const client = await colyseus.connectTo(room);
     const player = room.state.players.get(client.sessionId);
     if (!player) {
@@ -306,7 +308,7 @@ describe("GameRoom", () => {
   });
 
   it("equips armor that absorbs bullet damage", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const shooterClient = await colyseus.connectTo(room);
     const targetClient = await colyseus.connectTo(room);
     const shooter = room.state.players.get(shooterClient.sessionId);
@@ -338,7 +340,7 @@ describe("GameRoom", () => {
   });
 
   it("upgrades light armor to heavy and refuses another light craft", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const client = await colyseus.connectTo(room);
     const player = room.state.players.get(client.sessionId);
     if (!player) {
@@ -376,7 +378,7 @@ describe("GameRoom", () => {
   });
 
   it("throws a frag grenade that damages a player in the blast", async () => {
-    const room = await colyseus.createRoom<GameState>(GAME_ROOM_NAME, {});
+    const room = await openRoom();
     const shooterClient = await colyseus.connectTo(room);
     const targetClient = await colyseus.connectTo(room);
     const shooter = room.state.players.get(shooterClient.sessionId);
@@ -461,8 +463,3 @@ function sendShot(client: InputClient, aimAngle: number): void {
   input.send();
 }
 
-async function waitTicks(room: { waitForNextTimestep: () => Promise<void> }, ticks: number): Promise<void> {
-  for (let i = 0; i < ticks; i += 1) {
-    await room.waitForNextTimestep();
-  }
-}

@@ -114,6 +114,9 @@ export class GameRoom extends Room<{ input: MoveInput }> {
   private readonly slotByPickupId = new Map<string, number>();
   private readonly occupiedSlots = new Set<number>();
   private pendingRespawns: Array<{ slot: number; at: number }> = [];
+  private simTick = 0;
+  private simNow = 0;
+  private manualTime = false;
 
   async onAuth(_client: Client, _options: unknown, context: AuthContext) {
     if (!context.token) {
@@ -136,7 +139,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     }
   }
 
-  onCreate(): void {
+  onCreate(options?: { manualTime?: boolean }): void {
     for (const obstacle of GAME_MAP.obstacles) {
       if (!isHarvestable(obstacle)) {
         continue;
@@ -171,7 +174,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       if (typeof payload !== "string") {
         return;
       }
-      this.tryThrow(client.sessionId, payload, Date.now());
+      this.tryThrow(client.sessionId, payload, this.simNow);
     });
 
     this.rewind.attachAll(this.state.players, { fields: ["x", "y"] });
@@ -179,6 +182,24 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       this.spawnPickup(slot);
     }
     this.setFixedTimestep((ctx) => this.step(ctx), TICK_RATE);
+    if (options?.manualTime) {
+      this.manualTime = true;
+      this.setTimestep();
+      (this as unknown as { _simulationInterval?: ReturnType<typeof setInterval> })._simulationInterval = undefined;
+    }
+  }
+
+  /** Run fixed 30 Hz steps immediately. Only rooms created with `{ manualTime: true }` accept this. */
+  advance(ticks: number): void {
+    if (!this.manualTime) {
+      throw new Error("advance() requires a room created with { manualTime: true }");
+    }
+    const dt = 1 / TICK_RATE;
+    const dtMs = 1000 / TICK_RATE;
+    for (let i = 0; i < ticks; i += 1) {
+      this.simTick += 1;
+      this.step({ dt, dtMs, tick: this.simTick });
+    }
   }
 
   onJoin(client: Client, options?: JoinOptions): void {
@@ -210,6 +231,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
   private step(ctx: StepContext): void {
     const now = ctx.tick * ctx.dtMs;
     this.spawnDuePickups(now);
+    this.simNow = now;
     this.respawnNodes(now);
     this.stepGrenades(ctx.dt, ctx.dtMs);
     this.stepHazards(now, ctx.dtMs);
@@ -627,18 +649,19 @@ export class GameRoom extends Room<{ input: MoveInput }> {
   }
 
   private targetsSeenBy(sessionId: string): Array<{ id: string; x: number; y: number }> {
+    const players = [...this.state.players.entries()].filter(([id]) => id !== sessionId);
+    // Test steps skip the wall clock, so the lag-comp history still has old positions.
+    if (this.manualTime) {
+      return players.map(([id, other]) => ({ id, x: other.x, y: other.y }));
+    }
     try {
       const seen = this.rewind.lastSeenBy(sessionId);
-      return [...this.state.players.entries()]
-        .filter(([id]) => id !== sessionId)
-        .map(([id, other]) => {
-          const pose = seen.read(other, ["x", "y"]);
-          return { id, x: pose.x, y: pose.y };
-        });
+      return players.map(([id, other]) => {
+        const pose = seen.read(other, ["x", "y"]);
+        return { id, x: pose.x, y: pose.y };
+      });
     } catch {
-      return [...this.state.players.entries()]
-        .filter(([id]) => id !== sessionId)
-        .map(([id, other]) => ({ id, x: other.x, y: other.y }));
+      return players.map(([id, other]) => ({ id, x: other.x, y: other.y }));
     }
   }
 
