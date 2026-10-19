@@ -216,7 +216,9 @@ export class GameScene extends Phaser.Scene {
 
     const aim = this.readAim();
     const move = this.readMove();
-    const gather = !this.matchEnded && this.held === "arm" && !this.craftMenu.isOpen() && (this.input.activePointer.leftButtonDown() || this.pendingGather);
+    const pointer = this.input.activePointer;
+    const overCraftUi = this.craftMenu.contains(pointer.x, pointer.y) || this.hud.hitsCraftButton(pointer.x, pointer.y);
+    const gather = !this.matchEnded && this.held === "arm" && (this.pendingGather || (pointer.leftButtonDown() && !overCraftUi));
     const steps = this.predict.tick(time);
 
     for (let i = 0; i < steps; i += 1) {

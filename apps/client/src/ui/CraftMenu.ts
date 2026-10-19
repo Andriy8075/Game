@@ -132,12 +132,15 @@ export class CraftMenu {
     }
   }
 
-  handlePointer(x: number, y: number): boolean {
+  contains(x: number, y: number): boolean {
     if (!this.open) {
       return false;
     }
-    const inside = x >= this.originX && x <= this.originX + PANEL_W && y >= this.originY && y <= this.originY + this.panelHeight;
-    if (!inside) {
+    return x >= this.originX && x <= this.originX + PANEL_W && y >= this.originY && y <= this.originY + this.panelHeight;
+  }
+
+  handlePointer(x: number, y: number): boolean {
+    if (!this.contains(x, y)) {
       return false;
     }
     for (const button of this.buttons) {
