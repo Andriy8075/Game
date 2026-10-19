@@ -108,6 +108,7 @@ export class GameScene extends Phaser.Scene {
   private weaponId: string = STARTER_WEAPON_ID;
   private matchEnded = false;
   private pendingFire = false;
+  private holdingFire = false;
   private pendingGather = false;
   private readonly views = new Map<string, PlayerView>();
   private readonly pickups = new Map<string, PickupView>();
@@ -167,6 +168,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
+      this.holdingFire = false;
       if (this.matchEnded) {
         return;
       }
@@ -183,8 +185,18 @@ export class GameScene extends Phaser.Scene {
         return;
       }
       if (pointer.leftButtonDown()) {
+        this.holdingFire = true;
         this.useHeld();
       }
+    });
+
+    this.input.on("pointerup", (pointer: Phaser.Input.Pointer) => {
+      if (!pointer.leftButtonDown()) {
+        this.holdingFire = false;
+      }
+    });
+    this.input.on("pointerupoutside", () => {
+      this.holdingFire = false;
     });
 
     this.input.on("wheel", (_pointer: Phaser.Input.Pointer, _over: Phaser.GameObjects.GameObject[], _deltaX: number, deltaY: number) => {
@@ -217,6 +229,9 @@ export class GameScene extends Phaser.Scene {
     const aim = this.readAim();
     const move = this.readMove();
     const pointer = this.input.activePointer;
+    if (!pointer.leftButtonDown()) {
+      this.holdingFire = false;
+    }
     const overCraftUi = this.craftMenu.contains(pointer.x, pointer.y) || this.hud.hitsCraftButton(pointer.x, pointer.y);
     const gather = !this.matchEnded && this.held === "arm" && (this.pendingGather || (pointer.leftButtonDown() && !overCraftUi));
     const steps = this.predict.tick(time);
@@ -232,7 +247,7 @@ export class GameScene extends Phaser.Scene {
       data.moveX = this.matchEnded ? 0 : move.x;
       data.moveY = this.matchEnded ? 0 : move.y;
       data.aimAngle = aim;
-      data.fire = this.matchEnded ? false : this.pendingFire;
+      data.fire = !this.matchEnded && this.held === "gun" && (this.holdingFire || this.pendingFire);
       data.gather = this.matchEnded ? false : gather;
       this.inputHandle.send();
       this.pendingFire = false;

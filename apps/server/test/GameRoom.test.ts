@@ -12,6 +12,7 @@ import {
   PLAYER_MAX_HP,
   PLAYER_RADIUS,
   STARTER_WEAPON_ID,
+  TICK_RATE,
   getObstacle,
   getWeapon,
   weaponsForSource,
@@ -246,6 +247,45 @@ describe("GameRoom", () => {
     sendShot(shooterClient, 0);
     await waitTicks(room, 2);
     expect(target.hp).toBe(startHp - sidearm.damage * 2);
+  });
+
+  it("fires again on the first tick after cooldown while the trigger is held", async () => {
+    const room = await openRoom();
+    const shooterClient = await colyseus.connectTo(room);
+    const targetClient = await colyseus.connectTo(room);
+    const shooter = room.state.players.get(shooterClient.sessionId);
+    const target = room.state.players.get(targetClient.sessionId);
+    if (!shooter || !target) {
+      throw new Error("missing players");
+    }
+
+    shooter.x = 220;
+    shooter.y = 2200;
+    shooter.angle = 0;
+    target.x = 480;
+    target.y = 2200;
+    const sidearm = getWeapon(STARTER_WEAPON_ID);
+    const startHp = target.hp;
+    const dtMs = 1000 / TICK_RATE;
+    const shotTicks: number[] = [];
+    let previousHp = startHp;
+
+    for (let tick = 1; tick <= 40 && shotTicks.length < 3; tick += 1) {
+      sendShot(shooterClient, 0);
+      await waitTicks(room, 1);
+      if (target.hp < previousHp) {
+        shotTicks.push(tick);
+        previousHp = target.hp;
+      }
+    }
+
+    expect(shotTicks).toHaveLength(3);
+    expect(target.hp).toBe(startHp - sidearm.damage * 3);
+    for (let index = 1; index < shotTicks.length; index += 1) {
+      const between = (shotTicks[index]! - shotTicks[index - 1]!) * dtMs;
+      expect(between).toBeGreaterThanOrEqual(sidearm.fireCooldownMs);
+      expect(between - dtMs).toBeLessThan(sidearm.fireCooldownMs);
+    }
   });
 
   it("gathers wood from a nearby tree and ignores far nodes", async () => {
