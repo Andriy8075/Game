@@ -17,6 +17,8 @@ export class Hud {
   private readonly notice: Phaser.GameObjects.Text;
   private readonly craftButton: Phaser.GameObjects.Rectangle;
   private readonly craftLabel: Phaser.GameObjects.Text;
+  private readonly scoreboard: Phaser.GameObjects.Text;
+  private resultRoot?: Phaser.GameObjects.Container;
 
   constructor(private readonly scene: Phaser.Scene) {
     this.status = this.pin(scene.add.text(16, 16, "Connecting...", { ...STYLE, fontSize: "16px", backgroundColor: "#00000088", padding: { x: 8, y: 6 } }));
@@ -41,6 +43,15 @@ export class Hud {
     this.craftButton.setOrigin(0, 0);
     this.pin(this.craftButton);
     this.craftLabel = this.pin(scene.add.text(0, 0, "Craft  C", { ...STYLE, color: "#f1f8e9", fontSize: "14px" }));
+    this.scoreboard = this.pin(scene.add.text(0, 56, "", {
+      ...STYLE,
+      fontSize: "13px",
+      color: "#fff8e1",
+      backgroundColor: "#00000088",
+      padding: { x: 8, y: 6 },
+      align: "right",
+    }));
+    this.scoreboard.setOrigin(1, 0);
     this.layout(scene.scale.width);
   }
 
@@ -48,6 +59,45 @@ export class Hud {
     const x = Math.max(16, width - 124);
     this.craftButton.setPosition(x, 16);
     this.craftLabel.setPosition(x + 16, 20);
+    this.scoreboard.setPosition(width - 16, 56);
+  }
+
+  setScoreboard(rows: Array<{ name: string; kills: number; deaths: number }>): void {
+    const lines = [...rows]
+      .sort((a, b) => b.kills - a.kills || a.deaths - b.deaths || a.name.localeCompare(b.name))
+      .map((row) => `${row.name}  ${row.kills}K ${row.deaths}D`);
+    this.scoreboard.setText(lines.join("\n"));
+  }
+
+  showResult(title: string, onBack: () => void): void {
+    if (this.resultRoot) {
+      return;
+    }
+    const width = this.scene.scale.width;
+    const height = this.scene.scale.height;
+    const dim = this.scene.add.rectangle(0, 0, width, height, 0x000000, 0.55).setOrigin(0, 0);
+    const card = this.scene.add.rectangle(width / 2, height / 2, 360, 180, 0x12180f, 0.98);
+    card.setStrokeStyle(2, 0x3e5230);
+    const label = this.scene.add.text(width / 2, height / 2 - 36, title, {
+      ...STYLE,
+      fontSize: "22px",
+      color: "#f5f5f5",
+    }).setOrigin(0.5);
+    const button = this.scene.add.rectangle(width / 2, height / 2 + 36, 180, 40, 0x66bb6a);
+    button.setInteractive({ useHandCursor: true });
+    const buttonLabel = this.scene.add.text(width / 2, height / 2 + 36, "Back to menu", {
+      ...STYLE,
+      fontSize: "16px",
+      color: "#102016",
+    }).setOrigin(0.5);
+    button.on("pointerdown", () => onBack());
+    this.resultRoot = this.scene.add.container(0, 0, [dim, card, label, button, buttonLabel]);
+    this.resultRoot.setDepth(2000);
+    this.resultRoot.setScrollFactor(0);
+    for (const child of this.resultRoot.list) {
+      const pinned = child as { setScrollFactor?: (factor: number) => void };
+      pinned.setScrollFactor?.(0);
+    }
   }
 
   setStatus(text: string): void {

@@ -18,6 +18,7 @@ import {
   GRENADE_SPEED,
   HARVEST,
   HEAVY_ARMOR,
+  KILLS_TO_WIN,
   LIGHT_ARMOR,
   MAX_CLIENTS,
   MoveInput,
@@ -43,12 +44,15 @@ import {
   getWeapon,
   isHarvestable,
   isHeldSlot,
+  isStackedCraft,
   muzzleOrigin,
   nearestHarvestable,
   overlapsPickup,
   payCost,
   pickSpawn,
   randomPickupWeapon,
+  resolveMenuWeapon,
+  rollJoinLoadout,
   sanitizePlayerName,
   wrapAngle,
   type BlastEvent,
@@ -57,7 +61,7 @@ import {
   type JoinOptions,
   type ShotEvent,
 } from "@io-game/shared";
-import { findAccountById } from "../accounts/store";
+import { addKillXp, findAccountById } from "../accounts/store";
 import { GameState, HazardZone, Inventory, NodeState, Player, ThrownGrenade, WeaponPickup } from "./schema/GameState";
 
 type StepContext = {
@@ -117,6 +121,11 @@ export class GameRoom extends Room<{ input: MoveInput }> {
   private simTick = 0;
   private simNow = 0;
   private manualTime = false;
+  private readonly spawnWeaponId = new Map<string, string>();
+  private readonly accountIds = new Map<string, string>();
+  private readonly hazardOwners = new Map<string, string>();
+  /** Test seam. Guests pass level 0, so this never grants them a join bonus. */
+  random: () => number = Math.random;
 
   async onAuth(_client: Client, _options: unknown, context: AuthContext) {
     if (!context.token) {
@@ -133,7 +142,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       if (!account) {
         throw new Error("invalid_token");
       }
-      return { id: account.id, email: account.email, level: account.level };
+      return { id: account.id, email: account.email, level: account.level, xp: account.xp };
     } catch {
       throw new Error("invalid_token");
     }
@@ -150,19 +159,19 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     }
 
     this.onMessage("craft", (client, payload: unknown) => {
-      if (typeof payload !== "string") {
+      if (this.state.matchOver || typeof payload !== "string") {
         return;
       }
       this.tryCraft(client.sessionId, payload);
     });
     this.onMessage("use", (client, payload: unknown) => {
-      if (typeof payload !== "string") {
+      if (this.state.matchOver || typeof payload !== "string") {
         return;
       }
       this.tryUse(client.sessionId, payload);
     });
     this.onMessage("hold", (client, payload: unknown) => {
-      if (typeof payload !== "string" || !isHeldSlot(payload)) {
+      if (this.state.matchOver || typeof payload !== "string" || !isHeldSlot(payload)) {
         return;
       }
       const player = this.state.players.get(client.sessionId);
@@ -171,7 +180,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       }
     });
     this.onMessage("throw", (client, payload: unknown) => {
-      if (typeof payload !== "string") {
+      if (this.state.matchOver || typeof payload !== "string") {
         return;
       }
       this.tryThrow(client.sessionId, payload, this.simNow);
@@ -205,7 +214,14 @@ export class GameRoom extends Room<{ input: MoveInput }> {
   onJoin(client: Client, options?: JoinOptions): void {
     const occupied = [...this.state.players.values()].map((player) => ({ x: player.x, y: player.y }));
     const spawn = pickSpawn(occupied);
-    const starter = getWeapon(STARTER_WEAPON_ID);
+    const account = this.readAccount(client);
+    const level = account?.level ?? 0;
+    if (account) {
+      this.accountIds.set(client.sessionId, account.id);
+    }
+    const menuWeapon = resolveMenuWeapon(options?.weaponId, level);
+    const bonus = rollJoinLoadout(level, this.random, menuWeapon.id);
+    const weapon = getWeapon(bonus.weaponId ?? menuWeapon.id);
     const player = new Player();
     player.x = spawn.x;
     player.y = spawn.y;
@@ -214,9 +230,20 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     player.name = sanitizePlayerName(options?.name);
     player.hp = PLAYER_MAX_HP;
     player.maxHp = PLAYER_MAX_HP;
-    player.weaponId = starter.id;
-    player.damage = starter.damage;
     player.inventory = new Inventory();
+    this.equipWeapon(player, weapon.id);
+    this.spawnWeaponId.set(client.sessionId, weapon.id);
+    if (bonus.frag > 0) {
+      player.inventory.frag = bonus.frag;
+    }
+    if (bonus.bandage > 0) {
+      player.inventory.bandage = bonus.bandage;
+    }
+    if (bonus.lightArmor) {
+      player.armor = LIGHT_ARMOR;
+      player.maxArmor = LIGHT_ARMOR;
+      player.craftedLight = true;
+    }
     this.colorIndex += 1;
     this.state.players.set(client.sessionId, player);
   }
@@ -226,9 +253,14 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     this.lastFireAt.delete(client.sessionId);
     this.lastGatherAt.delete(client.sessionId);
     this.lastThrowAt.delete(client.sessionId);
+    this.spawnWeaponId.delete(client.sessionId);
+    this.accountIds.delete(client.sessionId);
   }
 
   private step(ctx: StepContext): void {
+    if (this.state.matchOver) {
+      return;
+    }
     const now = ctx.tick * ctx.dtMs;
     this.spawnDuePickups(now);
     this.simNow = now;
@@ -237,6 +269,9 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     this.stepHazards(now, ctx.dtMs);
 
     for (const [sessionId, player] of this.state.players) {
+      if (this.state.matchOver) {
+        break;
+      }
       if (player.slowMs > 0) {
         player.slowMs = Math.max(0, player.slowMs - ctx.dtMs);
       }
@@ -325,6 +360,17 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       return;
     }
 
+    if (recipe.weaponId) {
+      const weapon = getWeapon(recipe.weaponId);
+      if (weapon.source !== "craft" || weapon.id !== recipe.weaponId) {
+        return;
+      }
+      payCost(player.inventory, recipe.cost);
+      this.equipWeapon(player, weapon.id);
+      this.clients.get(sessionId)?.send("notice", `Crafted ${recipe.name}`);
+      return;
+    }
+
     payCost(player.inventory, recipe.cost);
     if (recipe.id === "lightArmor" || recipe.id === "heavyArmor") {
       const points = recipe.id === "lightArmor" ? LIGHT_ARMOR : HEAVY_ARMOR;
@@ -339,6 +385,9 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       return;
     }
 
+    if (!isStackedCraft(recipe.id)) {
+      return;
+    }
     player.inventory[recipe.id] += 1;
     this.clients.get(sessionId)?.send("notice", `Crafted ${recipe.name}`);
   }
@@ -449,7 +498,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
 
   private explode(grenade: ThrownGrenade): void {
     if (grenade.kind === GRENADE_KIND.frag) {
-      this.damageRadius(grenade.x, grenade.y, FRAG_RADIUS, FRAG_DAMAGE, true);
+      this.damageRadius(grenade.x, grenade.y, FRAG_RADIUS, FRAG_DAMAGE, true, grenade.ownerId);
       this.emitBlast(grenade.x, grenade.y, FRAG_RADIUS, grenade.kind);
       return;
     }
@@ -473,6 +522,9 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     const id = `h${this.hazardSeq}`;
     this.hazardSeq += 1;
     this.state.hazards.set(id, hazard);
+    if (grenade.ownerId) {
+      this.hazardOwners.set(id, grenade.ownerId);
+    }
     this.emitBlast(grenade.x, grenade.y, FIRE_RADIUS, grenade.kind);
   }
 
@@ -486,18 +538,22 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       hazard.ttlMs -= dtMs;
       const due = this.hazardTickAt.get(id) ?? 0;
       if (now >= due) {
-        this.damageRadius(hazard.x, hazard.y, hazard.radius, FIRE_DAMAGE, false);
+        this.damageRadius(hazard.x, hazard.y, hazard.radius, FIRE_DAMAGE, false, this.hazardOwners.get(id));
         this.hazardTickAt.set(id, now + FIRE_TICK_MS);
       }
       if (hazard.ttlMs <= 0) {
         this.state.hazards.delete(id);
         this.hazardTickAt.delete(id);
+        this.hazardOwners.delete(id);
       }
     }
   }
 
-  private damageRadius(x: number, y: number, radius: number, damage: number, falloff: boolean): void {
-    for (const player of this.state.players.values()) {
+  private damageRadius(x: number, y: number, radius: number, damage: number, falloff: boolean, ownerId?: string): void {
+    for (const [sessionId, player] of this.state.players) {
+      if (this.state.matchOver) {
+        return;
+      }
       const distance = Math.hypot(player.x - x, player.y - y);
       const amount = falloff ? blastDamage(distance, radius, damage) : distance <= radius ? damage : 0;
       if (amount <= 0) {
@@ -505,7 +561,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       }
       applyDamage(player, amount);
       if (player.hp <= 0) {
-        this.respawn(player);
+        this.onDowned(sessionId, ownerId);
       }
     }
   }
@@ -516,6 +572,9 @@ export class GameRoom extends Room<{ input: MoveInput }> {
   }
 
   private tryFire(sessionId: string, player: Player, now: number): void {
+    if (this.state.matchOver) {
+      return;
+    }
     const weapon = getWeapon(player.weaponId);
     const last = this.lastFireAt.get(sessionId) ?? Number.NEGATIVE_INFINITY;
     if (now - last < weapon.fireCooldownMs) {
@@ -539,8 +598,8 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       const target = this.state.players.get(result.id);
       if (target) {
         applyDamage(target, weapon.damage);
-        if (target.hp <= 0) {
-          this.respawn(target);
+        if (target.hp <= 0 && result.id) {
+          this.onDowned(result.id, sessionId);
         }
       }
     }
@@ -636,8 +695,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
 
     const weapon = getWeapon(pickup.weaponId);
     if (weapon.source === "pickup" && weapon.id === pickup.weaponId) {
-      player.weaponId = weapon.id;
-      player.damage = weapon.damage;
+      this.equipWeapon(player, weapon.id);
     }
 
     this.state.pickups.delete(closestId);
@@ -665,7 +723,37 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     }
   }
 
-  private respawn(player: Player): void {
+  private onDowned(victimId: string, killerId: string | undefined): void {
+    if (this.state.matchOver) {
+      return;
+    }
+    const victim = this.state.players.get(victimId);
+    if (!victim) {
+      return;
+    }
+    victim.deaths += 1;
+    const creditedKiller = killerId && killerId !== victimId ? killerId : undefined;
+    const killer = creditedKiller ? this.state.players.get(creditedKiller) : undefined;
+    if (killer && creditedKiller) {
+      killer.kills += 1;
+      this.broadcast("notice", `${killer.name} downed ${victim.name}`);
+      const accountId = this.accountIds.get(creditedKiller);
+      if (accountId) {
+        void addKillXp(accountId).catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          console.warn(`Could not save kill XP: ${message}`);
+        });
+      }
+      if (killer.kills >= KILLS_TO_WIN) {
+        this.state.matchOver = true;
+        this.state.winnerName = killer.name;
+        this.broadcast("notice", `${killer.name} wins the match`);
+      }
+    }
+    this.respawn(victimId, victim);
+  }
+
+  private respawn(sessionId: string, player: Player): void {
     const occupied = [...this.state.players.values()]
       .filter((other) => other !== player)
       .map((other) => ({ x: other.x, y: other.y }));
@@ -674,15 +762,32 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     player.y = spawn.y;
     player.hp = player.maxHp;
     player.slowMs = 0;
-    if (player.craftedHeavy) {
-      player.maxArmor = HEAVY_ARMOR;
-      player.armor = HEAVY_ARMOR;
-    } else if (player.craftedLight) {
-      player.maxArmor = LIGHT_ARMOR;
-      player.armor = LIGHT_ARMOR;
-    } else {
-      player.armor = 0;
-      player.maxArmor = 0;
+    player.inventory.frag = 0;
+    player.inventory.flash = 0;
+    player.inventory.incendiary = 0;
+    player.inventory.bandage = 0;
+    player.armor = 0;
+    player.maxArmor = 0;
+    player.craftedLight = false;
+    player.craftedHeavy = false;
+    if (player.held === "frag" || player.held === "flash" || player.held === "incendiary" || player.held === "bandage") {
+      player.held = "gun";
     }
+    this.equipWeapon(player, this.spawnWeaponId.get(sessionId) ?? STARTER_WEAPON_ID);
+  }
+
+  private equipWeapon(player: Player, weaponId: string): void {
+    const weapon = getWeapon(weaponId);
+    player.weaponId = weapon.id;
+    player.damage = weapon.damage;
+  }
+
+  private readAccount(client: Client): { id: string; level: number } | undefined {
+    const auth = client.auth;
+    if (typeof auth !== "object" || auth === null || !("id" in auth) || typeof auth.id !== "string") {
+      return undefined;
+    }
+    const level = "level" in auth && typeof auth.level === "number" ? auth.level : 0;
+    return { id: auth.id, level };
   }
 }

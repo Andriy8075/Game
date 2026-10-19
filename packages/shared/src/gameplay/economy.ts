@@ -1,4 +1,5 @@
 import { BANDAGE_HEAL, GATHER_REACH, HEAVY_ARMOR, LIGHT_ARMOR, PLAYER_RADIUS } from "../constants";
+import { type WeaponId } from "../weapons/catalog";
 import { GAME_MAP, isHarvestable, type CircleObstacle, type GameMap, type HarvestKind } from "../world/map";
 
 export const RESOURCE_IDS = ["wood", "stone", "iron", "gold"] as const;
@@ -26,10 +27,11 @@ export const HARVEST: Record<HarvestKind, HarvestSpec> = {
 };
 
 export type Recipe = {
-  id: CraftedId;
+  id: string;
   name: string;
   blurb: string;
   cost: Partial<Record<ResourceId, number>>;
+  weaponId?: WeaponId;
 };
 
 export const RECIPES: readonly Recipe[] = [
@@ -37,8 +39,10 @@ export const RECIPES: readonly Recipe[] = [
   { id: "flash", name: "Flash Grenade", blurb: "Slows nearby players.", cost: { stone: 1, gold: 1 } },
   { id: "incendiary", name: "Fire Grenade", blurb: "Leaves a burning patch.", cost: { wood: 2, iron: 1 } },
   { id: "bandage", name: "Bandage", blurb: `Heals ${BANDAGE_HEAL} HP.`, cost: { wood: 2 } },
-  { id: "lightArmor", name: "Light Armor", blurb: `Absorbs ${LIGHT_ARMOR} damage. Equips immediately, once per game.`, cost: { iron: 3, stone: 2 } },
-  { id: "heavyArmor", name: "Heavy Armor", blurb: `Absorbs ${HEAVY_ARMOR} damage. Equips immediately and replaces light armor.`, cost: { iron: 4, gold: 2 } },
+  { id: "lightArmor", name: "Light Armor", blurb: `Absorbs ${LIGHT_ARMOR} damage. Equips immediately, once per life.`, cost: { iron: 4, stone: 3 } },
+  { id: "heavyArmor", name: "Heavy Armor", blurb: `Absorbs ${HEAVY_ARMOR} damage. Equips immediately and replaces light armor.`, cost: { iron: 5, gold: 3 } },
+  { id: "forge-cannon", name: "Forge Cannon", blurb: "A heavy crafted gun for this life.", cost: { iron: 6, gold: 4 }, weaponId: "forge" },
+  { id: "whisper-kit", name: "Whisper", blurb: "A fast crafted gun for this life.", cost: { iron: 4, gold: 3 }, weaponId: "whisper" },
 ];
 
 export const GRENADE_KIND = {
@@ -95,6 +99,10 @@ export function cycleHeld(current: HeldSlot, direction: 1 | -1): HeldSlot {
 
 export function isGrenadeSlot(id: HeldSlot): id is "frag" | "flash" | "incendiary" {
   return id === "frag" || id === "flash" || id === "incendiary";
+}
+
+export function isStackedCraft(id: string): id is "frag" | "flash" | "incendiary" | "bandage" {
+  return id === "frag" || id === "flash" || id === "incendiary" || id === "bandage";
 }
 
 export function getRecipe(id: string): Recipe | undefined {

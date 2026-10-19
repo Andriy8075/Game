@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { sanitizePlayerName } from "@io-game/shared";
+import { grantKillXp, sanitizePlayerName } from "@io-game/shared";
 import { accountWeapons, accounts, getDb } from "./connection";
 
 export class AccountConflictError extends Error {
@@ -17,6 +17,7 @@ export type PublicAccount = {
   email: string;
   displayName: string;
   level: number;
+  xp: number;
 };
 
 export type AuthAccount = PublicAccount & {
@@ -39,6 +40,7 @@ export function publicAccount(account: AccountRow): PublicAccount {
     email: account.email,
     displayName: account.displayName,
     level: account.level,
+    xp: account.xp,
   };
 }
 
@@ -116,6 +118,16 @@ export async function createEmailAccount(email: string, passwordHash: string): P
     }
     throw error;
   }
+}
+
+export async function addKillXp(accountId: string): Promise<PublicAccount | null> {
+  const account = await findAccountById(accountId);
+  if (!account) {
+    return null;
+  }
+  const next = grantKillXp(account.level, account.xp);
+  await getDb().update(accounts).set({ level: next.level, xp: next.xp }).where(eq(accounts.id, accountId));
+  return publicAccount({ ...account, level: next.level, xp: next.xp });
 }
 
 export async function listWeapons(accountId: string): Promise<Array<{ weaponId: string; source: string }>> {

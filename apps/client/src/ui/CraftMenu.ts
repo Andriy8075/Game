@@ -1,12 +1,10 @@
 import Phaser from "phaser";
-import { RECIPES, armorCraftBlock, canAfford, formatCost, type ArmorProgress, type CraftedId, type StackCounts } from "@io-game/shared";
+import { RECIPES, armorCraftBlock, canAfford, formatCost, isStackedCraft, type ArmorProgress, type StackCounts } from "@io-game/shared";
 
 export type CraftAction =
-  | { type: "craft"; recipe: RecipeId }
+  | { type: "craft"; recipe: string }
   | { type: "use"; item: "bandage" }
   | { type: "hold"; item: "frag" | "flash" | "incendiary" };
-
-type RecipeId = CraftedId;
 
 type ButtonArt = {
   x: number;
@@ -20,7 +18,7 @@ type ButtonArt = {
 
 const PANEL_W = 340;
 const ROW_H = 68;
-const EXTRA: Partial<Record<RecipeId, { label: string; action: CraftAction }>> = {
+const EXTRA: Partial<Record<string, { label: string; action: CraftAction }>> = {
   frag: { label: "Hold", action: { type: "hold", item: "frag" } },
   flash: { label: "Hold", action: { type: "hold", item: "flash" } },
   incendiary: { label: "Hold", action: { type: "hold", item: "incendiary" } },
@@ -30,7 +28,7 @@ const EXTRA: Partial<Record<RecipeId, { label: string; action: CraftAction }>> =
 export class CraftMenu {
   private readonly root: Phaser.GameObjects.Container;
   private readonly buttons: ButtonArt[] = [];
-  private readonly owned = new Map<RecipeId, Phaser.GameObjects.Text>();
+  private readonly owned = new Map<string, Phaser.GameObjects.Text>();
   private open = false;
   private originX = 16;
   private originY = 48;
@@ -81,16 +79,21 @@ export class CraftMenu {
         type: "craft",
         recipe: recipe.id,
       }, (inventory, armor) => {
-        if (recipe.id === "lightArmor" || recipe.id === "heavyArmor") {
-          return canAfford(inventory, recipe.cost) && armorCraftBlock(recipe.id, armor) === undefined;
+        if (!canAfford(inventory, recipe.cost)) {
+          return false;
         }
-        return canAfford(inventory, recipe.cost);
+        if (recipe.id === "lightArmor" || recipe.id === "heavyArmor") {
+          return armorCraftBlock(recipe.id, armor) === undefined;
+        }
+        return true;
       });
       children.push(name, detail, owned, craft.rect, craft.label);
       this.buttons.push(craft);
       const extra = EXTRA[recipe.id];
       if (extra) {
-        const use = this.makeButton(scene, 112, rowY + 40, 88, 24, extra.label, extra.action, (inventory) => inventory[recipe.id] > 0);
+        const use = this.makeButton(scene, 112, rowY + 40, 88, 24, extra.label, extra.action, (inventory) => {
+          return isStackedCraft(recipe.id) && inventory[recipe.id] > 0;
+        });
         children.push(use.rect, use.label);
         this.buttons.push(use);
       }
@@ -119,10 +122,9 @@ export class CraftMenu {
     return this.open;
   }
 
-  refresh(inventory: StackCounts, armor: ArmorProgress): void {
+  refresh(inventory: StackCounts, armor: ArmorProgress, weaponId = ""): void {
     for (const recipe of RECIPES) {
-      const worn = recipe.id === "lightArmor" ? armor.craftedLight : recipe.id === "heavyArmor" ? armor.craftedHeavy : false;
-      this.owned.get(recipe.id)?.setText(worn ? "worn" : String(inventory[recipe.id]));
+      this.owned.get(recipe.id)?.setText(this.ownedLabel(recipe.id, recipe.weaponId, inventory, armor, weaponId));
     }
     for (const button of this.buttons) {
       const enabled = button.enabled(inventory, armor);
@@ -147,6 +149,28 @@ export class CraftMenu {
       }
     }
     return true;
+  }
+
+  private ownedLabel(
+    id: string,
+    weaponId: string | undefined,
+    inventory: StackCounts,
+    armor: ArmorProgress,
+    equipped: string,
+  ): string {
+    if (weaponId) {
+      return equipped === weaponId ? "equipped" : "";
+    }
+    if (id === "lightArmor") {
+      return armor.craftedLight ? "worn" : "";
+    }
+    if (id === "heavyArmor") {
+      return armor.craftedHeavy ? "worn" : "";
+    }
+    if (isStackedCraft(id)) {
+      return String(inventory[id]);
+    }
+    return "";
   }
 
   private makeButton(

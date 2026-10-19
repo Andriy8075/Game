@@ -1,6 +1,6 @@
 import { FIRE_COOLDOWN_MS, PLAYER_DAMAGE, WEAPON_RANGE } from "../constants";
 
-/** How a player is allowed to obtain the weapon. Menu selection and crafting are defined here and wired up later. */
+/** How a player is allowed to obtain the weapon. */
 export type WeaponSource = "starter" | "pickup" | "menu" | "craft";
 
 export type WeaponId =
@@ -26,7 +26,7 @@ export type WeaponDef = {
   color: number;
   /** Global account level required before the main menu can offer this weapon. */
   requiredLevel?: number;
-  /** Crafting recipe id. The crafting bench is not implemented yet. */
+  /** Crafting recipe id. The matching recipe lives in the craft menu. */
   recipeId?: string;
 };
 

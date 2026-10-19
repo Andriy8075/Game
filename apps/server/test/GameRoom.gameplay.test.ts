@@ -10,11 +10,13 @@ import {
   GAME_ROOM_NAME,
   HARVEST,
   HEAVY_ARMOR,
+  LIGHT_ARMOR,
   MoveInput,
   PLAYER_DAMAGE,
   PLAYER_MAX_HP,
   PLAYER_RADIUS,
   SLOW_SPEED_FACTOR,
+  STARTER_WEAPON_ID,
   THROW_COOLDOWN_MS,
   TICK_RATE,
   getObstacle,
@@ -445,19 +447,26 @@ describe("gather, craft, and combat", () => {
     expect(miner.inventory.bandage).toBe(0);
   });
 
-  it("restores crafted heavy armor after the wearer is downed", async () => {
+  it("drops crafted gear on death and keeps the join gun", async () => {
     const room = await openRoom();
     const shooterClient = await colyseus.connectTo(room);
     const targetClient = await colyseus.connectTo(room);
     const shooter = requirePlayer(room, shooterClient.sessionId);
     const target = requirePlayer(room, targetClient.sessionId);
 
-    target.inventory.iron = 4;
-    target.inventory.gold = 2;
+    target.inventory.iron = 11;
+    target.inventory.gold = 7;
+    target.inventory.wood = 4;
+    target.inventory.stone = 2;
+    sendMessage(targetClient, "craft", "forge-cannon");
     sendMessage(targetClient, "craft", "heavyArmor");
     await waitTicks(room, 2);
+    expect(target.weaponId).toBe("forge");
     expect(target.armor).toBe(HEAVY_ARMOR);
 
+    target.inventory.frag = 2;
+    target.inventory.bandage = 1;
+    target.held = "frag";
     target.hp = PLAYER_DAMAGE;
     target.armor = 0;
     placeDuel(shooter, target);
@@ -466,9 +475,24 @@ describe("gather, craft, and combat", () => {
     await waitTicks(room, 4);
 
     expect(target.hp).toBe(PLAYER_MAX_HP);
-    expect(target.armor).toBe(HEAVY_ARMOR);
-    expect(target.maxArmor).toBe(HEAVY_ARMOR);
-    expect(target.craftedHeavy).toBe(true);
+    expect(target.inventory.frag).toBe(0);
+    expect(target.inventory.bandage).toBe(0);
+    expect(target.armor).toBe(0);
+    expect(target.maxArmor).toBe(0);
+    expect(target.craftedHeavy).toBe(false);
+    expect(target.held).toBe("gun");
+    expect(target.weaponId).toBe(STARTER_WEAPON_ID);
+    expect(target.inventory.wood).toBe(4);
+    expect(target.inventory.stone).toBe(2);
+    expect(shooter.kills).toBe(1);
+    expect(target.deaths).toBe(1);
+
+    target.inventory.iron = 4;
+    target.inventory.stone = 3;
+    sendMessage(targetClient, "craft", "lightArmor");
+    await waitTicks(room, 2);
+    expect(target.armor).toBe(LIGHT_ARMOR);
+    expect(target.craftedLight).toBe(true);
   });
 });
 
@@ -502,7 +526,7 @@ function node(id: string): CircleObstacle {
   if (!obstacle || obstacle.kind === "building" || obstacle.kind === "fence") {
     throw new Error(`missing harvest node ${id}`);
   }
-  return obstacle;
+  return obstacle as CircleObstacle;
 }
 
 async function standAt(player: { x: number; y: number }, obstacle: CircleObstacle): Promise<void> {

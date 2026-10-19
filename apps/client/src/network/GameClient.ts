@@ -1,5 +1,5 @@
 import { Client, type Room } from "@colyseus/sdk";
-import { GAME_ROOM_NAME, GameState, sanitizePlayerName } from "@io-game/shared";
+import { GAME_ROOM_NAME, GameState, STARTER_WEAPON_ID, sanitizePlayerName } from "@io-game/shared";
 
 const DEFAULT_SERVER_URL = "http://localhost:2567";
 
@@ -16,6 +16,10 @@ export function getGameClient(): Client {
   return gameClient;
 }
 
-export async function connectToGame(name: string): Promise<GameRoom> {
-  return getGameClient().joinOrCreate(GAME_ROOM_NAME, { name: sanitizePlayerName(name) }, GameState);
+export async function connectToGame(name: string, weaponId: string = STARTER_WEAPON_ID): Promise<GameRoom> {
+  return getGameClient().joinOrCreate(
+    GAME_ROOM_NAME,
+    { name: sanitizePlayerName(name), weaponId },
+    GameState,
+  );
 }

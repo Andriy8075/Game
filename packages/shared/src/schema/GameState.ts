@@ -33,6 +33,8 @@ export const Player = schema({
   held: t.string().default("gun"),
   craftedLight: t.boolean().default(false),
   craftedHeavy: t.boolean().default(false),
+  kills: t.number().default(0),
+  deaths: t.number().default(0),
   inventory: t.ref(Inventory),
 }, "Player");
 
@@ -80,6 +82,8 @@ export const GameState = schema({
   nodes: t.map(NodeState),
   grenades: t.map(ThrownGrenade),
   hazards: t.map(HazardZone),
+  matchOver: t.boolean().default(false),
+  winnerName: t.string().default(""),
 }, "GameState");
 
 export type GameState = SchemaType<typeof GameState>;

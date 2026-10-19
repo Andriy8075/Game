@@ -15,6 +15,7 @@ import {
   getObstacle,
   getWeapon,
   weaponsForSource,
+  type GameState,
 } from "@io-game/shared";
 import { createGameServer } from "../src/app.config";
 import { GameRoom } from "../src/rooms/GameRoom";
@@ -317,8 +318,8 @@ describe("GameRoom", () => {
       throw new Error("missing players");
     }
 
-    target.inventory.iron = 3;
-    target.inventory.stone = 2;
+    target.inventory.iron = 4;
+    target.inventory.stone = 3;
     sendMessage(targetClient, "craft", "lightArmor");
     await waitTicks(room, 2);
     expect(target.armor).toBe(LIGHT_ARMOR);
@@ -347,9 +348,9 @@ describe("GameRoom", () => {
       throw new Error("missing player");
     }
 
-    player.inventory.iron = 7;
-    player.inventory.stone = 2;
-    player.inventory.gold = 2;
+    player.inventory.iron = 9;
+    player.inventory.stone = 3;
+    player.inventory.gold = 3;
     sendMessage(client, "craft", "lightArmor");
     await waitTicks(room, 2);
     expect(player.armor).toBe(LIGHT_ARMOR);
@@ -407,6 +408,73 @@ describe("GameRoom", () => {
     expect(shooter.inventory.frag).toBe(0);
     expect(target.hp).toBeLessThan(startHp);
     expect(shooter.hp).toBe(PLAYER_MAX_HP);
+  });
+
+  it("keeps a guest on the sidearm even if they ask for a menu gun", async () => {
+    const room = await openRoom();
+    room.random = () => 0;
+    const client = await colyseus.connectTo(room, { name: "Guest", weaponId: "horizon" });
+    const player = room.state.players.get(client.sessionId);
+
+    expect(player?.weaponId).toBe(STARTER_WEAPON_ID);
+    expect(player?.inventory.frag).toBe(0);
+    expect(player?.inventory.bandage).toBe(0);
+    expect(player?.armor).toBe(0);
+  });
+
+  it("refuses light armor when the new price is not met", async () => {
+    const room = await openRoom();
+    const client = await colyseus.connectTo(room);
+    const player = room.state.players.get(client.sessionId);
+    if (!player) {
+      throw new Error("missing player");
+    }
+
+    player.inventory.iron = 3;
+    player.inventory.stone = 2;
+    sendMessage(client, "craft", "lightArmor");
+    await waitTicks(room, 2);
+
+    expect(player.armor).toBe(0);
+    expect(player.inventory.iron).toBe(3);
+    expect(player.inventory.stone).toBe(2);
+  });
+
+  it("ends the match at 10 kills and ignores further damage", async () => {
+    const room = await openRoom();
+    const shooterClient = await colyseus.connectTo(room, { name: "Nova" });
+    const targetClient = await colyseus.connectTo(room, { name: "Rook" });
+    const shooter = room.state.players.get(shooterClient.sessionId);
+    const target = room.state.players.get(targetClient.sessionId);
+    if (!shooter || !target) {
+      throw new Error("missing players");
+    }
+
+    shooter.kills = 9;
+    target.hp = PLAYER_DAMAGE;
+    target.armor = 0;
+    shooter.x = 220;
+    shooter.y = 2200;
+    shooter.angle = 0;
+    target.x = 480;
+    target.y = 2200;
+    await waitTicks(room, 18);
+    sendShot(shooterClient, 0);
+    await waitTicks(room, 4);
+
+    expect(shooter.kills).toBe(10);
+    expect(target.deaths).toBe(1);
+    expect(room.state.matchOver).toBe(true);
+    expect(room.state.winnerName).toBe("Nova");
+
+    target.hp = 1;
+    target.armor = 0;
+    sendShot(shooterClient, 0);
+    await waitTicks(room, 4);
+
+    expect(target.hp).toBe(1);
+    expect(shooter.kills).toBe(10);
+    expect(target.deaths).toBe(1);
   });
 
   it("serves a health endpoint", async () => {

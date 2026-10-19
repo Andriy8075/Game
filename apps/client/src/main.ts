@@ -1,5 +1,14 @@
 import Phaser from "phaser";
-import { DEFAULT_PLAYER_NAME, PLAYER_NAME_MAX_LENGTH, sanitizePlayerName } from "@io-game/shared";
+import {
+  DEFAULT_PLAYER_NAME,
+  PLAYER_NAME_MAX_LENGTH,
+  STARTER_WEAPON_ID,
+  formatAccountLevel,
+  formatWeaponStats,
+  sanitizePlayerName,
+  suggestedPlayerName,
+  weaponsOfferedAtLevel,
+} from "@io-game/shared";
 import { GameScene } from "./scenes/GameScene";
 import { getGameClient, getServerUrl } from "./network/GameClient";
 
@@ -18,7 +27,9 @@ const config: Phaser.Types.Core.GameConfig = {
 
 type AccountUser = {
   email?: string;
+  displayName?: string;
   level?: number;
+  xp?: number;
 };
 
 type AuthMode = "signup" | "login";
@@ -42,6 +53,7 @@ function requiredElement<T extends Element>(selector: string): T {
 const menu = requiredElement<HTMLElement>("#menu");
 const form = requiredElement<HTMLFormElement>("#menu-form");
 const nameInput = requiredElement<HTMLInputElement>("#player-name");
+const weaponOptions = requiredElement<HTMLElement>("#weapon-options");
 const gameRoot = requiredElement<HTMLElement>("#game");
 const accountStatus = requiredElement<HTMLElement>("#account-status");
 const showSignup = requiredElement<HTMLButtonElement>("#show-signup");
@@ -60,9 +72,56 @@ nameInput.maxLength = PLAYER_NAME_MAX_LENGTH;
 nameInput.placeholder = DEFAULT_PLAYER_NAME;
 
 const client = getGameClient();
+let game: Phaser.Game | undefined;
 let started = false;
 let authMode: AuthMode = "signup";
 let authBusy = false;
+let signedIn = false;
+let accountLevel = 0;
+
+function selectedWeaponId(): string {
+  const selected = weaponOptions.querySelector<HTMLInputElement>("input:checked");
+  return selected?.value ?? STARTER_WEAPON_ID;
+}
+
+function renderWeapons(level: number): void {
+  const previous = selectedWeaponId();
+  const weapons = weaponsOfferedAtLevel(level);
+  weaponOptions.replaceChildren();
+  for (const weapon of weapons) {
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = "weapon";
+    input.value = weapon.id;
+    input.checked = weapon.id === previous;
+    label.append(input, document.createTextNode(formatWeaponStats(weapon)));
+    weaponOptions.append(label);
+  }
+  if (!weaponOptions.querySelector("input:checked")) {
+    const first = weaponOptions.querySelector<HTMLInputElement>("input");
+    if (first) {
+      first.checked = true;
+    }
+  }
+}
+
+function leaveMatch(): void {
+  game?.destroy(true);
+  game = undefined;
+  started = false;
+  menu.hidden = false;
+  gameRoot.hidden = true;
+  document.body.classList.remove("in-game");
+  void client.auth
+    .getUserData<AccountUser>()
+    .then((response) => {
+      showSignedIn(response.user);
+    })
+    .catch(() => {
+      showSignedOut();
+    });
+}
 
 function errorText(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -77,21 +136,31 @@ function setAuthError(message: string): void {
 function showSignedIn(user: AccountUser): void {
   const email = user.email ?? "your account";
   const level = typeof user.level === "number" ? user.level : 1;
+  const xp = typeof user.xp === "number" ? user.xp : 0;
+  signedIn = true;
+  accountLevel = level;
   accountStatus.hidden = false;
-  accountStatus.textContent = `Signed in as ${email} · Level ${level}`;
+  accountStatus.textContent = `Signed in as ${email} · ${formatAccountLevel(level, xp)}`;
   showSignup.hidden = true;
   showLogin.hidden = true;
   logoutButton.hidden = false;
   authForm.hidden = true;
   setAuthError("");
+  if (nameInput.value.trim().length === 0) {
+    nameInput.value = suggestedPlayerName(user.displayName);
+  }
+  renderWeapons(level);
 }
 
 function showSignedOut(): void {
+  signedIn = false;
+  accountLevel = 0;
   accountStatus.hidden = true;
   accountStatus.textContent = "";
   showSignup.hidden = false;
   showLogin.hidden = false;
   logoutButton.hidden = true;
+  renderWeapons(0);
 }
 
 function openAuth(mode: AuthMode): void {
@@ -197,16 +266,21 @@ form.addEventListener("submit", (event) => {
 
   started = true;
   const playerName = sanitizePlayerName(nameInput.value);
+  const weaponId = selectedWeaponId();
   menu.hidden = true;
   gameRoot.hidden = false;
   document.body.classList.add("in-game");
 
-  new Phaser.Game({
+  game = new Phaser.Game({
     ...config,
     callbacks: {
-      preBoot: (game) => {
-        game.registry.set("playerName", playerName);
+      preBoot: (instance) => {
+        instance.registry.set("playerName", playerName);
+        instance.registry.set("weaponId", weaponId);
+        instance.registry.set("onLeaveMatch", leaveMatch);
       },
     },
   });
 });
+
+renderWeapons(signedIn ? accountLevel : 0);

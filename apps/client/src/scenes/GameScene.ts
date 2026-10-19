@@ -10,6 +10,7 @@ import {
   PLAYER_RADIUS,
   PLAYER_SPEED,
   SLOW_SPEED_FACTOR,
+  STARTER_WEAPON_ID,
   applyMovement,
   cycleHeld,
   formatWeaponStats,
@@ -51,6 +52,8 @@ type SyncedPlayer = {
   held: string;
   craftedLight: boolean;
   craftedHeavy: boolean;
+  kills: number;
+  deaths: number;
   inventory: SyncedInventory;
 };
 
@@ -98,6 +101,8 @@ export class GameScene extends Phaser.Scene {
   private actors!: ActorsView;
   private held: HeldSlot = "gun";
   private playerName = DEFAULT_PLAYER_NAME;
+  private weaponId: string = STARTER_WEAPON_ID;
+  private matchEnded = false;
   private pendingFire = false;
   private pendingGather = false;
   private readonly views = new Map<string, PlayerView>();
@@ -109,6 +114,8 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     this.playerName = sanitizePlayerName(this.registry.get("playerName"));
+    const chosenWeapon = this.registry.get("weaponId");
+    this.weaponId = typeof chosenWeapon === "string" ? chosenWeapon : STARTER_WEAPON_ID;
     drawWorld(this);
     this.actors = new ActorsView(this);
     this.hud = new Hud(this);
@@ -156,6 +163,9 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
+      if (this.matchEnded) {
+        return;
+      }
       if (this.hud.hitsCraftButton(pointer.x, pointer.y)) {
         this.craftMenu.toggle();
         return;
@@ -174,7 +184,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.input.on("wheel", (_pointer: Phaser.Input.Pointer, _over: Phaser.GameObjects.GameObject[], _deltaX: number, deltaY: number) => {
-      if (deltaY === 0) {
+      if (this.matchEnded || deltaY === 0) {
         return;
       }
       this.selectHeld(cycleHeld(this.held, deltaY > 0 ? 1 : -1));
@@ -189,11 +199,20 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    this.readHotkeys();
+    const match = this.room.state as { matchOver?: boolean; winnerName?: string };
+    if (match.matchOver) {
+      this.matchEnded = true;
+      const winner = match.winnerName && match.winnerName.length > 0 ? match.winnerName : "Someone";
+      this.hud.showResult(`${winner} wins`, () => this.leaveMatch());
+    }
+
+    if (!this.matchEnded) {
+      this.readHotkeys();
+    }
 
     const aim = this.readAim();
     const move = this.readMove();
-    const gather = this.held === "arm" && !this.craftMenu.isOpen() && (this.input.activePointer.leftButtonDown() || this.pendingGather);
+    const gather = !this.matchEnded && this.held === "arm" && !this.craftMenu.isOpen() && (this.input.activePointer.leftButtonDown() || this.pendingGather);
     const steps = this.predict.tick(time);
 
     for (let i = 0; i < steps; i += 1) {
@@ -204,11 +223,11 @@ export class GameScene extends Phaser.Scene {
         fire: boolean;
         gather: boolean;
       };
-      data.moveX = move.x;
-      data.moveY = move.y;
+      data.moveX = this.matchEnded ? 0 : move.x;
+      data.moveY = this.matchEnded ? 0 : move.y;
       data.aimAngle = aim;
-      data.fire = this.pendingFire;
-      data.gather = gather;
+      data.fire = this.matchEnded ? false : this.pendingFire;
+      data.gather = this.matchEnded ? false : gather;
       this.inputHandle.send();
       this.pendingFire = false;
       this.pendingGather = false;
@@ -220,6 +239,11 @@ export class GameScene extends Phaser.Scene {
       grenades: Map<string, { x: number; y: number; kind: number }>;
       hazards: Map<string, { x: number; y: number; radius: number; kind: number }>;
     };
+    this.hud.setScoreboard([...state.players.values()].map((player) => ({
+      name: sanitizePlayerName(player.name),
+      kills: player.kills ?? 0,
+      deaths: player.deaths ?? 0,
+    })));
     this.actors.syncNodes(state.nodes);
     this.actors.syncGrenades(state.grenades);
     this.actors.syncHazards(state.hazards);
@@ -258,7 +282,7 @@ export class GameScene extends Phaser.Scene {
         this.craftMenu.refresh(inventory, {
           craftedLight: player.craftedLight,
           craftedHeavy: player.craftedHeavy,
-        });
+        }, player.weaponId);
         const near = nearestHarvestable(x, y, (id) => state.nodes.get(id)?.remaining ?? 0);
         const armKey = HELD_SLOTS.indexOf("arm") + 1;
         this.hud.setPrompt(near
@@ -336,12 +360,19 @@ export class GameScene extends Phaser.Scene {
 
   private async connect(): Promise<void> {
     try {
-      this.room = await connectToGame(this.playerName);
+      this.room = await connectToGame(this.playerName, this.weaponId);
       this.hud.setStatus("Connected");
       this.bindRoom(this.room);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to connect";
       this.hud.setStatus(message);
+    }
+  }
+
+  private leaveMatch(): void {
+    const leave = this.registry.get("onLeaveMatch");
+    if (typeof leave === "function") {
+      leave();
     }
   }
 

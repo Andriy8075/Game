@@ -60,7 +60,7 @@ describe("weapon catalog", () => {
     expect(getWeapon("horizon").range).toBeGreaterThan(getWeapon("vanguard").range);
   });
 
-  it("reserves crafted weapons for a later crafting bench", () => {
+  it("points crafted weapons at craft recipes", () => {
     const craft = weaponsForSource("craft");
     expect(craft.map((weapon) => [weapon.id, weapon.recipeId])).toEqual([
       ["forge", "forge-cannon"],

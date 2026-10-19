@@ -14,6 +14,7 @@ export const accounts = pgTable("accounts", {
   googleId: text("google_id").unique(),
   displayName: text("display_name").notNull(),
   level: integer("level").notNull().default(1),
+  xp: integer("xp").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

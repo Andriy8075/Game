@@ -164,19 +164,26 @@ describe("recipes and harvest nodes", () => {
     expect(formatCost(getRecipe("flash")?.cost ?? {})).toBe("1 stone, 1 gold");
     expect(formatCost(getRecipe("incendiary")?.cost ?? {})).toBe("2 wood, 1 iron");
     expect(formatCost(getRecipe("bandage")?.cost ?? {})).toBe("2 wood");
-    expect(formatCost(getRecipe("lightArmor")?.cost ?? {})).toBe("2 stone, 3 iron");
-    expect(formatCost(getRecipe("heavyArmor")?.cost ?? {})).toBe("4 iron, 2 gold");
+    expect(formatCost(getRecipe("lightArmor")?.cost ?? {})).toBe("3 stone, 4 iron");
+    expect(formatCost(getRecipe("heavyArmor")?.cost ?? {})).toBe("5 iron, 3 gold");
+    expect(getRecipe("forge-cannon")?.weaponId).toBe("forge");
+    expect(getRecipe("whisper-kit")?.weaponId).toBe("whisper");
+    expect(formatCost(getRecipe("forge-cannon")?.cost ?? {})).toBe("6 iron, 4 gold");
+    expect(formatCost(getRecipe("whisper-kit")?.cost ?? {})).toBe("4 iron, 3 gold");
 
-    const inventory = stacks({ wood: 9, stone: 9, iron: 9, gold: 9, frag: 2 });
+    const short = stacks({ wood: 0, stone: 3, iron: 3, gold: 0 });
+    expect(canAfford(short, getRecipe("lightArmor")?.cost ?? {})).toBe(false);
+
+    const inventory = stacks({ wood: 8, stone: 10, iron: 30, gold: 20, frag: 2 });
     for (const recipe of RECIPES) {
       expect(canAfford(inventory, recipe.cost)).toBe(true);
       payCost(inventory, recipe.cost);
     }
     expect(inventory).toMatchObject({
-      wood: 9 - 2 - 2,
-      stone: 9 - 2 - 1 - 2,
-      iron: 9 - 1 - 1 - 3 - 4,
-      gold: 9 - 1 - 2,
+      wood: 8 - 2 - 2,
+      stone: 10 - 2 - 1 - 3,
+      iron: 30 - 1 - 1 - 4 - 5 - 6 - 4,
+      gold: 20 - 1 - 3 - 4 - 3,
       frag: 2,
     });
   });
