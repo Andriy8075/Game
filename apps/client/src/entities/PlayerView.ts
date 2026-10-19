@@ -17,6 +17,7 @@ export class PlayerView {
   private readonly rightHand: Phaser.GameObjects.Arc;
   private handPose: HeldSlot = "gun";
   private swingToken = 0;
+  private swingLeftNext = true;
   private readonly hpWidth = 40;
   private equippedId = "";
 
@@ -24,7 +25,7 @@ export class PlayerView {
     const torso = scene.add.circle(0, 0, PLAYER_RADIUS, color);
     torso.setStrokeStyle(3, 0x102027, 0.9);
 
-    const visor = scene.add.circle(7, -5, 6, 0x102027);
+    const visor = scene.add.circle(0, 0, 6, 0x102027);
     this.leftHand = scene.add.circle(11, 12, 5, 0xffcc80);
     this.rightHand = scene.add.circle(18, 5, 5, 0xffcc80);
     this.weaponGfx = scene.add.graphics();
@@ -144,32 +145,33 @@ export class PlayerView {
     if (this.handPose !== "arm") {
       return;
     }
+    const swingLeft = this.swingLeftNext;
+    this.swingLeftNext = !this.swingLeftNext;
+    const hand = swingLeft ? this.leftHand : this.rightHand;
+    const rest = swingLeft ? { x: 6, y: 15 } : { x: 6, y: -13 };
     const token = this.swingToken + 1;
     this.swingToken = token;
     const scene = this.root.scene;
-    scene.tweens.killTweensOf([this.leftHand, this.rightHand]);
-    const finish = () => {
-      if (this.swingToken !== token || this.handPose !== "arm") {
-        return;
-      }
-      this.placeHands("arm");
-    };
+    scene.tweens.killTweensOf(hand);
     scene.tweens.chain({
-      targets: this.leftHand,
-      tweens: [
-        { x: 2, y: 18, duration: 70 },
-        { x: 18, y: 7, duration: 80 },
-        { x: 6, y: 15, duration: 120 },
-      ],
-      onComplete: finish,
-    });
-    scene.tweens.chain({
-      targets: this.rightHand,
-      tweens: [
-        { x: 2, y: -16, duration: 70 },
-        { x: 18, y: -5, duration: 80 },
-        { x: 6, y: -13, duration: 120 },
-      ],
+      targets: hand,
+      tweens: swingLeft
+        ? [
+            { x: 2, y: 18, duration: 70 },
+            { x: 18, y: 7, duration: 80 },
+            { x: rest.x, y: rest.y, duration: 120 },
+          ]
+        : [
+            { x: 2, y: -16, duration: 70 },
+            { x: 18, y: -5, duration: 80 },
+            { x: rest.x, y: rest.y, duration: 120 },
+          ],
+      onComplete: () => {
+        if (this.swingToken !== token || this.handPose !== "arm") {
+          return;
+        }
+        hand.setPosition(rest.x, rest.y);
+      },
     });
   }
 
