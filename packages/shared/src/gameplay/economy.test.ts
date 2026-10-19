@@ -6,6 +6,7 @@ import {
   applyDamage,
   blastDamage,
   canAfford,
+  chooseWallPayment,
   cycleHeld,
   formatCost,
   gatherRadius,
@@ -80,7 +81,7 @@ describe("economy", () => {
   });
 
   it("keeps armor off the held wheel and allows each armor type once", () => {
-    expect([...HELD_SLOTS]).toEqual(["gun", "frag", "flash", "incendiary", "bandage", "arm"]);
+    expect([...HELD_SLOTS]).toEqual(["gun", "frag", "flash", "incendiary", "bandage", "wall", "arm"]);
     const fresh = { craftedLight: false, craftedHeavy: false };
     expect(armorCraftBlock("lightArmor", fresh)).toBeUndefined();
     expect(armorCraftBlock("heavyArmor", fresh)).toBeUndefined();
@@ -128,7 +129,7 @@ describe("held slots", () => {
       slot = cycleHeld(slot, 1);
       forward.push(slot);
     }
-    expect(forward).toEqual(["frag", "flash", "incendiary", "bandage", "arm", "gun"]);
+    expect(forward).toEqual(["frag", "flash", "incendiary", "bandage", "wall", "arm", "gun"]);
 
     const backward: HeldSlot[] = [];
     slot = "gun";
@@ -136,7 +137,7 @@ describe("held slots", () => {
       slot = cycleHeld(slot, -1);
       backward.push(slot);
     }
-    expect(backward).toEqual(["arm", "bandage", "incendiary", "flash", "frag", "gun"]);
+    expect(backward).toEqual(["arm", "wall", "bandage", "incendiary", "flash", "frag", "gun"]);
   });
 
   it("accepts the weapon menu and rejects armor as something to hold", () => {
@@ -154,6 +155,7 @@ describe("held slots", () => {
     expect(isGrenadeSlot("gun")).toBe(false);
     expect(isGrenadeSlot("bandage")).toBe(false);
     expect(isGrenadeSlot("arm")).toBe(false);
+    expect(isGrenadeSlot("wall")).toBe(false);
   });
 });
 
@@ -186,6 +188,16 @@ describe("recipes and harvest nodes", () => {
       gold: 20 - 1 - 3 - 4 - 3,
       frag: 2,
     });
+  });
+
+  it("pays for a wall with wood, then stone, then iron", () => {
+    expect(chooseWallPayment(stacks({ wood: 3, stone: 2, iron: 2 }))?.material).toBe("wood");
+    expect(chooseWallPayment(stacks({ wood: 2, stone: 2, iron: 2 }))?.material).toBe("stone");
+    expect(chooseWallPayment(stacks({ iron: 2 }))?.material).toBe("iron");
+    expect(chooseWallPayment(stacks({ wood: 2, stone: 1, iron: 1 }))).toBeUndefined();
+    expect(chooseWallPayment(stacks({ wood: 3, stone: 2 }), "stone")?.material).toBe("stone");
+    expect(chooseWallPayment(stacks({ wood: 3 }), "stone")).toBeUndefined();
+    expect(chooseWallPayment(stacks({ wood: 9 }), "gold")).toBeUndefined();
   });
 
   it("describes every resource node", () => {

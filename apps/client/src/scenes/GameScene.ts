@@ -12,12 +12,16 @@ import {
   SLOW_SPEED_FACTOR,
   STARTER_WEAPON_ID,
   applyMovement,
+  chooseWallPayment,
   cycleHeld,
   formatWeaponStats,
   getWeapon,
   isGrenadeSlot,
   isHeldSlot,
+  mapWithWalls,
   nearestHarvestable,
+  wallCostLabel,
+  wallRectForAim,
   sanitizePlayerName,
   type BlastEvent,
   type GatherEvent,
@@ -238,6 +242,7 @@ export class GameScene extends Phaser.Scene {
       nodes: Map<string, { remaining: number }>;
       grenades: Map<string, { x: number; y: number; kind: number }>;
       hazards: Map<string, { x: number; y: number; radius: number; kind: number }>;
+      walls: Map<string, { x: number; y: number; width: number; height: number; hp: number; maxHp: number; material: string }>;
     };
     this.hud.setScoreboard([...state.players.values()].map((player) => ({
       name: sanitizePlayerName(player.name),
@@ -247,6 +252,7 @@ export class GameScene extends Phaser.Scene {
     this.actors.syncNodes(state.nodes);
     this.actors.syncGrenades(state.grenades);
     this.actors.syncHazards(state.hazards);
+    this.actors.syncWalls(state.walls);
 
     for (const [sessionId, player] of state.players) {
       const view = this.views.get(sessionId);
@@ -286,11 +292,20 @@ export class GameScene extends Phaser.Scene {
         }, player.weaponId);
         const near = nearestHarvestable(x, y, (id) => state.nodes.get(id)?.remaining ?? 0);
         const armKey = HELD_SLOTS.indexOf("arm") + 1;
-        this.hud.setPrompt(near
-          ? this.held === "arm"
-            ? `Click to gather ${HARVEST[near.kind].label}`
-            : `Select Arm (${armKey}) to gather ${HARVEST[near.kind].label}`
-          : "");
+        const payment = chooseWallPayment(inventory);
+        if (this.held === "wall") {
+          this.actors.showWallPreview(wallRectForAim(x, y, aim), payment?.material ?? "wood", payment !== undefined);
+          this.hud.setPrompt(payment
+            ? `Click to place a ${payment.material} barricade`
+            : `Need ${wallCostLabel()}`);
+        } else {
+          this.actors.showWallPreview(undefined);
+          this.hud.setPrompt(near
+            ? this.held === "arm"
+              ? `Click to gather ${HARVEST[near.kind].label}`
+              : `Select Arm (${armKey}) to gather ${HARVEST[near.kind].label}`
+            : "");
+        }
       }
     }
   }
@@ -354,6 +369,10 @@ export class GameScene extends Phaser.Scene {
     }
     if (isGrenadeSlot(this.held)) {
       this.room.send("throw", this.held);
+      return;
+    }
+    if (this.held === "wall") {
+      this.room.send("place-wall", "auto");
       return;
     }
     this.room.send("use", this.held);
@@ -443,6 +462,20 @@ export class GameScene extends Phaser.Scene {
     room.onReconnect(() => this.hud.setStatus("Connected"));
   }
 
+  private worldForMovement() {
+    const walls = (this.room?.state as {
+      walls?: Map<string, { x: number; y: number; width: number; height: number }>;
+    } | undefined)?.walls;
+    if (!walls) {
+      return GAME_MAP;
+    }
+    const placed = [];
+    for (const [id, wall] of walls) {
+      placed.push({ id, x: wall.x, y: wall.y, width: wall.width, height: wall.height });
+    }
+    return mapWithWalls(placed);
+  }
+
   private bindReconciler(player: SyncedPlayer): void {
     if (!this.predict || !this.inputHandle) {
       return;
@@ -454,7 +487,7 @@ export class GameScene extends Phaser.Scene {
       smoothMs: 65,
       step: (ctx, state, command) => {
         const speed = player.slowMs > 0 ? PLAYER_SPEED * SLOW_SPEED_FACTOR : PLAYER_SPEED;
-        applyMovement(state, command as { moveX: number; moveY: number; aimAngle: number }, ctx.dt, GAME_MAP, PLAYER_RADIUS, speed);
+        applyMovement(state, command as { moveX: number; moveY: number; aimAngle: number }, ctx.dt, this.worldForMovement(), PLAYER_RADIUS, speed);
       },
     });
   }

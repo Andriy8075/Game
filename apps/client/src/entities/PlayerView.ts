@@ -120,7 +120,8 @@ export class PlayerView {
     const gunOut = slot === "gun";
     this.weaponGfx.setVisible(gunOut);
     this.carried.setVisible(slot === "frag" || slot === "flash" || slot === "incendiary");
-    this.carriedBox.setVisible(slot === "bandage");
+    this.carriedBox.setVisible(slot === "bandage" || slot === "wall");
+    this.carriedBox.setSize(slot === "wall" ? 20 : 14, slot === "wall" ? 8 : 10);
     const changed = slot !== this.handPose;
     this.handPose = slot;
     this.leftHand.setRadius(slot === "arm" ? 6 : 5);
@@ -138,6 +139,8 @@ export class PlayerView {
       this.carried.setFillStyle(0xff7043);
     } else if (slot === "bandage") {
       this.carriedBox.setFillStyle(0xfafafa);
+    } else if (slot === "wall") {
+      this.carriedBox.setFillStyle(0x8d6e63);
     }
   }
 

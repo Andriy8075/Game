@@ -1,9 +1,24 @@
 import Phaser from "phaser";
-import { GAME_MAP, HARVEST, isHarvestable, type BlastEvent } from "@io-game/shared";
+import { GAME_MAP, HARVEST, WALL_STYLE, isHarvestable, isWallMaterial, type BlastEvent, type WallMaterial, type WallRect } from "@io-game/shared";
 
 type NodeSync = { remaining: number };
 type GrenadeSync = { x: number; y: number; kind: number };
 type HazardSync = { x: number; y: number; radius: number; kind: number };
+type WallSync = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  hp: number;
+  maxHp: number;
+  material: string;
+};
+
+type WallArt = {
+  body: Phaser.GameObjects.Rectangle;
+  hpBg: Phaser.GameObjects.Rectangle;
+  hpFill: Phaser.GameObjects.Rectangle;
+};
 
 const GRENADE_COLORS = [0x546e7a, 0xfff59d, 0xff7043];
 
@@ -18,6 +33,8 @@ export class ActorsView {
   private readonly nodes = new Map<string, NodeArt>();
   private readonly grenades = new Map<string, Phaser.GameObjects.Arc>();
   private readonly hazards = new Map<string, Phaser.GameObjects.Arc>();
+  private readonly walls = new Map<string, WallArt>();
+  private wallGhost?: Phaser.GameObjects.Rectangle;
 
   constructor(private readonly scene: Phaser.Scene) {
     for (const obstacle of GAME_MAP.obstacles) {
@@ -75,6 +92,66 @@ export class ActorsView {
       art.label.setAlpha(alpha);
       art.count.setAlpha(alpha);
       art.count.setText(depleted ? "regrowing" : `${remaining}`);
+    }
+  }
+
+  showWallPreview(rect: WallRect | undefined, material: WallMaterial = "wood", ready = false): void {
+    if (!rect) {
+      this.wallGhost?.setVisible(false);
+      return;
+    }
+    const style = WALL_STYLE[material];
+    if (!this.wallGhost) {
+      this.wallGhost = this.scene.add.rectangle(0, 0, rect.width, rect.height, style.fill, 0.4);
+      this.wallGhost.setStrokeStyle(2, style.stroke, 0.7);
+      this.wallGhost.setDepth(6);
+    }
+    this.wallGhost.setVisible(true);
+    this.wallGhost.setPosition(rect.x + rect.width / 2, rect.y + rect.height / 2);
+    this.wallGhost.setSize(rect.width, rect.height);
+    this.wallGhost.setFillStyle(style.fill, ready ? 0.42 : 0.22);
+    this.wallGhost.setStrokeStyle(2, ready ? style.stroke : 0xef9a9a, 0.8);
+  }
+
+  syncWalls(walls: Map<string, WallSync> | undefined): void {
+    const seen = new Set<string>();
+    if (walls) {
+      for (const [id, wall] of walls) {
+        seen.add(id);
+        let art = this.walls.get(id);
+        if (!art) {
+          const body = this.scene.add.rectangle(0, 0, wall.width, wall.height, WALL_STYLE.wood.fill);
+          body.setStrokeStyle(3, WALL_STYLE.wood.stroke);
+          body.setDepth(4);
+          const hpBg = this.scene.add.rectangle(0, 0, wall.width, 4, 0x111111);
+          hpBg.setDepth(5);
+          const hpFill = this.scene.add.rectangle(0, 0, wall.width, 4, 0xa5d6a7);
+          hpFill.setOrigin(0, 0.5);
+          hpFill.setDepth(5);
+          art = { body, hpBg, hpFill };
+          this.walls.set(id, art);
+        }
+        const style = isWallMaterial(wall.material) ? WALL_STYLE[wall.material] : WALL_STYLE.wood;
+        const ratio = wall.maxHp > 0 ? Math.max(0, Math.min(1, wall.hp / wall.maxHp)) : 0;
+        const barY = wall.y - 6;
+        art.body.setPosition(wall.x + wall.width / 2, wall.y + wall.height / 2);
+        art.body.setSize(wall.width, wall.height);
+        art.body.setFillStyle(style.fill);
+        art.body.setStrokeStyle(3, style.stroke);
+        art.hpBg.setPosition(wall.x + wall.width / 2, barY);
+        art.hpBg.setSize(Math.max(8, wall.width), 4);
+        art.hpFill.setPosition(wall.x, barY);
+        art.hpFill.setSize(Math.max(0, wall.width * ratio), 4);
+        art.hpFill.setFillStyle(ratio > 0.5 ? 0xa5d6a7 : 0xffb74d);
+      }
+    }
+    for (const [id, art] of this.walls) {
+      if (!seen.has(id)) {
+        art.body.destroy();
+        art.hpBg.destroy();
+        art.hpFill.destroy();
+        this.walls.delete(id);
+      }
     }
   }
 

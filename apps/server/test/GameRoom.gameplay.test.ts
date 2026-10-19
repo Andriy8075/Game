@@ -19,6 +19,7 @@ import {
   STARTER_WEAPON_ID,
   THROW_COOLDOWN_MS,
   TICK_RATE,
+  WALL_HP,
   getObstacle,
   type CircleObstacle,
 } from "@io-game/shared";
@@ -57,7 +58,7 @@ describe("gather, craft, and combat", () => {
     const client = await colyseus.connectTo(room);
     const player = requirePlayer(room, client.sessionId);
 
-    for (const slot of ["frag", "flash", "incendiary", "bandage", "arm", "gun"] as const) {
+    for (const slot of ["frag", "flash", "incendiary", "bandage", "wall", "arm", "gun"] as const) {
       sendMessage(client, "hold", slot);
       await waitTicks(room, 1);
       expect(player.held).toBe(slot);
@@ -494,6 +495,166 @@ describe("gather, craft, and combat", () => {
     expect(target.armor).toBe(LIGHT_ARMOR);
     expect(target.craftedLight).toBe(true);
   });
+
+  it("places a barricade in front of the aim and spends wood, stone, or iron", async () => {
+    const room = await openRoom();
+    const client = await colyseus.connectTo(room);
+    const player = requirePlayer(room, client.sessionId);
+    player.x = 220;
+    player.y = 2200;
+    player.angle = 0;
+    player.inventory.wood = 2;
+    player.inventory.stone = 1;
+    player.inventory.iron = 1;
+    sendMessage(client, "hold", "gun");
+    await waitTicks(room, 1);
+    sendMessage(client, "place-wall", "auto");
+    await waitTicks(room, 2);
+    expect(room.state.walls.size).toBe(0);
+
+    sendMessage(client, "hold", "wall");
+    await waitTicks(room, 1);
+    sendMessage(client, "place-wall", "auto");
+    await waitTicks(room, 2);
+    expect(room.state.walls.size).toBe(0);
+    expect(player.inventory.wood).toBe(2);
+
+    player.inventory.wood = 3;
+    player.inventory.stone = 2;
+    player.inventory.iron = 2;
+    sendMessage(client, "place-wall", "auto");
+    await waitTicks(room, 2);
+
+    expect(player.inventory.wood).toBe(0);
+    expect(player.inventory.stone).toBe(2);
+    expect(player.inventory.iron).toBe(2);
+    const wall = onlyWall(room);
+    expect(wall.material).toBe("wood");
+    expect(wall.hp).toBe(WALL_HP);
+    expect(wall.x).toBeGreaterThan(player.x + PLAYER_RADIUS);
+    expect(wall.ownerId).toBe(client.sessionId);
+
+    await waitTicks(room, 12);
+    sendMessage(client, "place-wall", "stone");
+    await waitTicks(room, 2);
+    expect(room.state.walls.size).toBe(1);
+    expect(player.inventory.stone).toBe(2);
+  });
+
+  it("places a stone barricade from the selected slot when wood is short", async () => {
+    const room = await openRoom();
+    const client = await colyseus.connectTo(room);
+    const player = requirePlayer(room, client.sessionId);
+    player.x = 220;
+    player.y = 2200;
+    player.inventory.stone = 2;
+
+    sendMessage(client, "hold", "wall");
+    await waitTicks(room, 1);
+    player.angle = Math.PI / 2;
+    sendMessage(client, "place-wall", "auto");
+    await waitTicks(room, 2);
+
+    const wall = onlyWall(room);
+    expect(wall.material).toBe("stone");
+    expect(wall.height).toBeLessThan(wall.width);
+    expect(wall.y).toBeGreaterThan(player.y);
+    expect(player.inventory.stone).toBe(0);
+  });
+
+  it("does not spend resources when the wall would cover another player", async () => {
+    const room = await openRoom();
+    const client = await colyseus.connectTo(room);
+    const other = await colyseus.connectTo(room);
+    const player = requirePlayer(room, client.sessionId);
+    const target = requirePlayer(room, other.sessionId);
+    player.x = 220;
+    player.y = 2200;
+    player.angle = 0;
+    target.x = 255;
+    target.y = 2200;
+    player.inventory.iron = 2;
+
+    sendMessage(client, "hold", "wall");
+    await waitTicks(room, 1);
+    sendMessage(client, "place-wall", "iron");
+    await waitTicks(room, 2);
+    expect(room.state.walls.size).toBe(0);
+    expect(player.inventory.iron).toBe(2);
+  });
+
+  it("blocks movement and stops bullets until a few shots break it", async () => {
+    const room = await openRoom();
+    const shooterClient = await colyseus.connectTo(room);
+    const targetClient = await colyseus.connectTo(room);
+    const shooter = requirePlayer(room, shooterClient.sessionId);
+    const target = requirePlayer(room, targetClient.sessionId);
+    shooter.x = 220;
+    shooter.y = 2200;
+    shooter.angle = 0;
+    target.x = 700;
+    target.y = 2200;
+    shooter.inventory.wood = 3;
+    sendMessage(shooterClient, "hold", "wall");
+    await waitTicks(room, 1);
+
+    sendMessage(shooterClient, "place-wall", "wood");
+    await waitTicks(room, 2);
+    const wall = onlyWall(room);
+    const startX = shooter.x;
+
+    sendMove(shooterClient, 1, 0);
+    await waitTicks(room, 20);
+    expect(shooter.x).toBeGreaterThan(startX);
+    expect(shooter.x).toBeLessThan(wall.x);
+
+    shooter.x = 220;
+    shooter.y = 2200;
+    shooter.angle = 0;
+    sendMessage(shooterClient, "hold", "gun");
+    await waitTicks(room, 1);
+    sendShot(shooterClient, 0);
+    await waitTicks(room, 4);
+    expect(target.hp).toBe(PLAYER_MAX_HP);
+    expect(onlyWall(room).hp).toBe(WALL_HP - PLAYER_DAMAGE);
+
+    await waitTicks(room, 12);
+    sendShot(shooterClient, 0);
+    await waitTicks(room, 4);
+    expect(room.state.walls.size).toBe(0);
+    expect(target.hp).toBe(PLAYER_MAX_HP);
+
+    await waitTicks(room, 12);
+    sendShot(shooterClient, 0);
+    await waitTicks(room, 4);
+    expect(target.hp).toBe(PLAYER_MAX_HP - PLAYER_DAMAGE);
+  });
+
+  it("caps each player at a handful of walls", async () => {
+    const room = await openRoom();
+    const client = await colyseus.connectTo(room);
+    const player = requirePlayer(room, client.sessionId);
+    player.inventory.wood = 30;
+    player.angle = 0;
+    sendMessage(client, "hold", "wall");
+    await waitTicks(room, 1);
+
+    for (let i = 0; i < 8; i += 1) {
+      player.x = 200;
+      player.y = 200 + i * 140;
+      sendMessage(client, "place-wall", "wood");
+      await waitTicks(room, 12);
+    }
+
+    expect(room.state.walls.size).toBe(8);
+    expect(player.inventory.wood).toBe(6);
+
+    player.y = 200 + 8 * 140;
+    sendMessage(client, "place-wall", "wood");
+    await waitTicks(room, 12);
+    expect(room.state.walls.size).toBe(8);
+    expect(player.inventory.wood).toBe(6);
+  });
 });
 
 type InputClient = {
@@ -562,6 +723,14 @@ function projectGrenade(grenade: { x: number; y: number; vx: number; vy: number;
     fuse -= dtMs;
   }
   return { x, y };
+}
+
+function onlyWall(room: RoomState): { x: number; y: number; width: number; height: number; hp: number; material: string; ownerId: string } {
+  const wall = [...room.state.walls.values()][0];
+  if (!wall || room.state.walls.size !== 1) {
+    throw new Error(`expected one wall, found ${room.state.walls.size}`);
+  }
+  return wall;
 }
 
 function onlyGrenade(room: RoomState): { x: number; y: number; vx: number; vy: number; fuseMs: number } {

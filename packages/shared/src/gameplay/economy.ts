@@ -26,6 +26,52 @@ export const HARVEST: Record<HarvestKind, HarvestSpec> = {
   gold: { resource: "gold", label: "gold", yield: 1, charges: 2, respawnMs: 22000 },
 };
 
+export const WALL_MATERIALS = ["wood", "stone", "iron"] as const;
+export type WallMaterial = (typeof WALL_MATERIALS)[number];
+
+export const WALL_PAYMENTS: Record<WallMaterial, Partial<Record<ResourceId, number>>> = {
+  wood: { wood: 3 },
+  stone: { stone: 2 },
+  iron: { iron: 2 },
+};
+
+export const WALL_STYLE: Record<WallMaterial, { fill: number; stroke: number }> = {
+  wood: { fill: 0x8d6e63, stroke: 0x4e342e },
+  stone: { fill: 0xb0bec5, stroke: 0x546e7a },
+  iron: { fill: 0x90a4ae, stroke: 0x455a64 },
+};
+
+export function isWallMaterial(id: string): id is WallMaterial {
+  return (WALL_MATERIALS as readonly string[]).includes(id);
+}
+
+export function wallCostLabel(): string {
+  const parts = WALL_MATERIALS.map((material) => formatCost(WALL_PAYMENTS[material]));
+  return `${parts.slice(0, -1).join(", ")}, or ${parts[parts.length - 1]}`;
+}
+
+/** Spend wood first, then stone, then iron. A named material never falls through to another. */
+export function chooseWallPayment(
+  stacks: StackCounts,
+  requested?: string,
+): { material: WallMaterial; cost: Partial<Record<ResourceId, number>> } | undefined {
+  if (requested && requested !== "auto") {
+    if (!isWallMaterial(requested)) {
+      return undefined;
+    }
+    const cost = WALL_PAYMENTS[requested];
+    return canAfford(stacks, cost) ? { material: requested, cost } : undefined;
+  }
+
+  for (const material of WALL_MATERIALS) {
+    const cost = WALL_PAYMENTS[material];
+    if (canAfford(stacks, cost)) {
+      return { material, cost };
+    }
+  }
+  return undefined;
+}
+
 export type Recipe = {
   id: string;
   name: string;
@@ -51,7 +97,7 @@ export const GRENADE_KIND = {
   incendiary: 2,
 } as const;
 
-export const HELD_SLOTS = ["gun", "frag", "flash", "incendiary", "bandage", "arm"] as const;
+export const HELD_SLOTS = ["gun", "frag", "flash", "incendiary", "bandage", "wall", "arm"] as const;
 export type HeldSlot = (typeof HELD_SLOTS)[number];
 
 export const HELD_LABELS: Record<HeldSlot, string> = {
@@ -60,6 +106,7 @@ export const HELD_LABELS: Record<HeldSlot, string> = {
   flash: "Flash Grenade",
   incendiary: "Fire Grenade",
   bandage: "Bandage",
+  wall: "Barricade",
   arm: "Arm",
 };
 
@@ -69,6 +116,7 @@ export const HELD_SHORT: Record<HeldSlot, string> = {
   flash: "Flash",
   incendiary: "Fire",
   bandage: "Bandage",
+  wall: "Barricade",
   arm: "Arm",
 };
 

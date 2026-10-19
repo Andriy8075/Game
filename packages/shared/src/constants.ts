@@ -39,6 +39,14 @@ export const FIRE_TTL_MS = 2800;
 export const FIRE_TICK_MS = 400;
 export const FIRE_DAMAGE = 8;
 
+/** Short cover. Two sidearm shots break one; heavier guns break it faster. */
+export const WALL_HP = 40;
+export const WALL_LENGTH = 96;
+export const WALL_THICKNESS = 18;
+export const WALL_GAP = 10;
+export const WALL_PLACE_COOLDOWN_MS = 300;
+export const WALL_MAX_PER_PLAYER = 8;
+
 export const PLAYER_COLORS = [
   0x4fc3f7,
   0xff8a65,

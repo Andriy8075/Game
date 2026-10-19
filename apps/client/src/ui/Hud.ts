@@ -26,7 +26,7 @@ export class Hud {
     this.resources = this.pin(scene.add.text(16, 88, "", { ...STYLE, color: "#fff8e1", backgroundColor: "#00000066", padding: { x: 8, y: 6 } }));
     this.items = this.pin(scene.add.text(16, 124, "", { ...STYLE, color: "#dce7d4", backgroundColor: "#00000066", padding: { x: 8, y: 6 } }));
     this.held = this.pin(scene.add.text(16, 160, "Holding Gun", { ...STYLE, color: "#ffe082", backgroundColor: "#00000088", padding: { x: 8, y: 6 } }));
-    this.pin(scene.add.text(16, 196, "WASD move · walk over a weapon to equip it · 1-6 or wheel selects gun, grenades, bandage, arm · click uses · C craft", {
+    this.pin(scene.add.text(16, 196, "WASD move · walk over a weapon to equip it · 1-7 or wheel selects gun, grenades, bandage, barricade, arm · click uses · C craft", {
       ...STYLE,
       fontSize: "13px",
       color: "#dce7d4",

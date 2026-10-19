@@ -76,12 +76,26 @@ export const HazardZone = schema({
 
 export type HazardZone = SchemaType<typeof HazardZone>;
 
+export const PlacedWall = schema({
+  x: t.number().default(0),
+  y: t.number().default(0),
+  width: t.number().default(0),
+  height: t.number().default(0),
+  hp: t.number().default(0),
+  maxHp: t.number().default(0),
+  material: t.string().default("wood"),
+  ownerId: t.string().default(""),
+}, "PlacedWall");
+
+export type PlacedWall = SchemaType<typeof PlacedWall>;
+
 export const GameState = schema({
   players: t.map(Player),
   pickups: t.map(WeaponPickup),
   nodes: t.map(NodeState),
   grenades: t.map(ThrownGrenade),
   hazards: t.map(HazardZone),
+  walls: t.map(PlacedWall),
   matchOver: t.boolean().default(false),
   winnerName: t.string().default(""),
 }, "GameState");

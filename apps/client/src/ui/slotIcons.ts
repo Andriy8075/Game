@@ -12,6 +12,7 @@ import repeater from "../assets/slots/repeater.svg?raw";
 import sidearm from "../assets/slots/sidearm.svg?raw";
 import splinter from "../assets/slots/splinter.svg?raw";
 import vanguard from "../assets/slots/vanguard.svg?raw";
+import wall from "../assets/slots/wall.svg?raw";
 import whisper from "../assets/slots/whisper.svg?raw";
 
 export const SLOT_ICON_W = 50;
@@ -31,6 +32,7 @@ const SLOT_SVGS: Record<string, string> = {
   flash,
   incendiary,
   bandage,
+  wall,
   arm,
 };
 

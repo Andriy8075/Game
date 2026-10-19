@@ -32,19 +32,26 @@ import {
   STARTER_WEAPON_ID,
   THROW_COOLDOWN_MS,
   TICK_RATE,
+  WALL_HP,
+  WALL_MAX_PER_PLAYER,
+  WALL_PLACE_COOLDOWN_MS,
   armorCraftBlock,
   applyDamage,
   applyMovement,
   blastDamage,
   canAfford,
   castHitscan,
+  chooseWallPayment,
+  clamp,
   clampAxis,
   formatCost,
   getRecipe,
   getWeapon,
+  isBlocked,
   isHarvestable,
   isHeldSlot,
   isStackedCraft,
+  mapWithWalls,
   muzzleOrigin,
   nearestHarvestable,
   overlapsPickup,
@@ -54,6 +61,9 @@ import {
   resolveMenuWeapon,
   rollJoinLoadout,
   sanitizePlayerName,
+  wallCostLabel,
+  wallPlacementBlock,
+  wallRectForAim,
   wrapAngle,
   type BlastEvent,
   type CraftedId,
@@ -62,7 +72,7 @@ import {
   type ShotEvent,
 } from "@io-game/shared";
 import { addKillXp, findAccountById } from "../accounts/store";
-import { GameState, HazardZone, Inventory, NodeState, Player, ThrownGrenade, WeaponPickup } from "./schema/GameState";
+import { GameState, HazardZone, Inventory, NodeState, PlacedWall, Player, ThrownGrenade, WeaponPickup } from "./schema/GameState";
 
 type StepContext = {
   dt: number;
@@ -109,10 +119,12 @@ export class GameRoom extends Room<{ input: MoveInput }> {
   private lastFireAt = new Map<string, number>();
   private lastGatherAt = new Map<string, number>();
   private lastThrowAt = new Map<string, number>();
+  private lastPlaceAt = new Map<string, number>();
   private nodeRespawnAt = new Map<string, number>();
   private hazardTickAt = new Map<string, number>();
   private grenadeSeq = 1;
   private hazardSeq = 1;
+  private wallSeq = 1;
   private colorIndex = 0;
   private pickupSerial = 0;
   private readonly slotByPickupId = new Map<string, number>();
@@ -185,6 +197,12 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       }
       this.tryThrow(client.sessionId, payload, this.simNow);
     });
+    this.onMessage("place-wall", (client, payload: unknown) => {
+      if (this.state.matchOver) {
+        return;
+      }
+      this.tryPlaceWall(client.sessionId, typeof payload === "string" ? payload : "auto");
+    });
 
     this.rewind.attachAll(this.state.players, { fields: ["x", "y"] });
     for (let slot = 0; slot < PICKUP_SLOTS.length; slot += 1) {
@@ -253,6 +271,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     this.lastFireAt.delete(client.sessionId);
     this.lastGatherAt.delete(client.sessionId);
     this.lastThrowAt.delete(client.sessionId);
+    this.lastPlaceAt.delete(client.sessionId);
     this.spawnWeaponId.delete(client.sessionId);
     this.accountIds.delete(client.sessionId);
   }
@@ -280,7 +299,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       const command = channel.next();
       if (command) {
         const speed = player.slowMs > 0 ? PLAYER_SPEED * SLOW_SPEED_FACTOR : PLAYER_SPEED;
-        applyMovement(player, command, ctx.dt, GAME_MAP, PLAYER_RADIUS, speed);
+        applyMovement(player, command, ctx.dt, this.liveMap(), PLAYER_RADIUS, speed);
 
         if (command.gather && !channel.wasIdle && player.held === "arm") {
           this.tryGather(sessionId, player, now);
@@ -455,7 +474,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
 
       const nextX = grenade.x + grenade.vx * dt;
       const nextY = grenade.y + grenade.vy * dt;
-      if (this.blocked(nextX, nextY)) {
+      if (isBlocked(nextX, nextY, GRENADE_RADIUS, this.liveMap())) {
         grenade.vx = 0;
         grenade.vy = 0;
       } else {
@@ -469,31 +488,6 @@ export class GameRoom extends Room<{ input: MoveInput }> {
         this.state.grenades.delete(id);
       }
     }
-  }
-
-  private blocked(x: number, y: number): boolean {
-    if (x < GRENADE_RADIUS || y < GRENADE_RADIUS || x > GAME_MAP.width - GRENADE_RADIUS || y > GAME_MAP.height - GRENADE_RADIUS) {
-      return true;
-    }
-    for (const obstacle of GAME_MAP.obstacles) {
-      if (obstacle.kind === "building" || obstacle.kind === "fence") {
-        const nearestX = Math.max(obstacle.x, Math.min(x, obstacle.x + obstacle.width));
-        const nearestY = Math.max(obstacle.y, Math.min(y, obstacle.y + obstacle.height));
-        const dx = x - nearestX;
-        const dy = y - nearestY;
-        if (dx * dx + dy * dy < GRENADE_RADIUS * GRENADE_RADIUS) {
-          return true;
-        }
-      } else if (isHarvestable(obstacle)) {
-        const dx = x - obstacle.x;
-        const dy = y - obstacle.y;
-        const reach = GRENADE_RADIUS + obstacle.radius;
-        if (dx * dx + dy * dy < reach * reach) {
-          return true;
-        }
-      }
-    }
-    return false;
   }
 
   private explode(grenade: ThrownGrenade): void {
@@ -564,6 +558,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
         this.onDowned(sessionId, ownerId);
       }
     }
+    this.damageWalls(x, y, radius, damage, falloff);
   }
 
   private emitBlast(x: number, y: number, radius: number, kind: number): void {
@@ -589,10 +584,14 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       origin.y,
       player.angle,
       targets,
-      GAME_MAP,
+      this.liveMap(),
       weapon.range,
       sessionId,
     );
+
+    if (result.kind === "obstacle" && result.id) {
+      this.hurtWall(result.id, weapon.damage);
+    }
 
     if (result.kind === "player" && result.id) {
       const target = this.state.players.get(result.id);
@@ -703,6 +702,87 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     if (slot !== undefined) {
       this.occupiedSlots.delete(slot);
       this.pendingRespawns.push({ slot, at: now + PICKUP_RESPAWN_MS });
+    }
+  }
+
+  private tryPlaceWall(sessionId: string, requested: string): void {
+    const player = this.state.players.get(sessionId);
+    if (!player || player.hp <= 0 || player.held !== "wall") {
+      return;
+    }
+
+    const last = this.lastPlaceAt.get(sessionId) ?? Number.NEGATIVE_INFINITY;
+    if (this.simNow - last < WALL_PLACE_COOLDOWN_MS) {
+      return;
+    }
+
+    const owned = [...this.state.walls.values()].filter((wall) => wall.ownerId === sessionId).length;
+    if (owned >= WALL_MAX_PER_PLAYER) {
+      this.clients.get(sessionId)?.send("notice", "Break a wall before placing another");
+      return;
+    }
+
+    const payment = chooseWallPayment(player.inventory, requested);
+    if (!payment) {
+      this.clients.get(sessionId)?.send("notice", `Need ${wallCostLabel()}`);
+      return;
+    }
+
+    const rect = wallRectForAim(player.x, player.y, player.angle);
+    const blocked = wallPlacementBlock(
+      rect,
+      GAME_MAP,
+      [...this.state.players.values()],
+      [...this.state.walls.values()],
+    );
+    if (blocked) {
+      this.clients.get(sessionId)?.send("notice", blocked);
+      return;
+    }
+
+    payCost(player.inventory, payment.cost);
+    this.lastPlaceAt.set(sessionId, this.simNow);
+
+    const wall = new PlacedWall();
+    wall.x = rect.x;
+    wall.y = rect.y;
+    wall.width = rect.width;
+    wall.height = rect.height;
+    wall.hp = WALL_HP;
+    wall.maxHp = WALL_HP;
+    wall.material = payment.material;
+    wall.ownerId = sessionId;
+    this.state.walls.set(`w${this.wallSeq}`, wall);
+    this.wallSeq += 1;
+    this.clients.get(sessionId)?.send("notice", "Wall placed");
+  }
+
+  private liveMap() {
+    const walls = [];
+    for (const [id, wall] of this.state.walls) {
+      walls.push({ id, x: wall.x, y: wall.y, width: wall.width, height: wall.height });
+    }
+    return mapWithWalls(walls);
+  }
+
+  private hurtWall(id: string, amount: number): void {
+    const wall = this.state.walls.get(id);
+    if (!wall || amount <= 0) {
+      return;
+    }
+    wall.hp = Math.max(0, wall.hp - amount);
+    if (wall.hp <= 0) {
+      this.state.walls.delete(id);
+    }
+  }
+
+  private damageWalls(x: number, y: number, radius: number, damage: number, falloff: boolean): void {
+    for (const [id, wall] of [...this.state.walls.entries()]) {
+      const closestX = clamp(x, wall.x, wall.x + wall.width);
+      const closestY = clamp(y, wall.y, wall.y + wall.height);
+      const distance = Math.hypot(x - closestX, y - closestY);
+      const amount = falloff ? blastDamage(distance, radius, damage) : distance <= radius ? damage : 0;
+      this.hurtWall(id, amount);
     }
   }
 

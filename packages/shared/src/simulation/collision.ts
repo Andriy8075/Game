@@ -26,11 +26,18 @@ export function clampToWorld(
   };
 }
 
+export type RectBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 export function circleOverlapsRect(
   x: number,
   y: number,
   radius: number,
-  rect: RectObstacle,
+  rect: RectBounds,
 ): boolean {
   const closestX = clamp(x, rect.x, rect.x + rect.width);
   const closestY = clamp(y, rect.y, rect.y + rect.height);
