@@ -1,15 +1,21 @@
 import { describe, expect, it } from "vitest";
+import { PLAYER_MAX_HP } from "./constants";
 import { STARTER_WEAPON_ID } from "./weapons/catalog";
 import {
+  MAX_LEVEL,
   XP_PER_KILL,
   XP_PER_LEVEL,
+  XP_PER_WIN,
   formatAccountLevel,
-  grantKillXp,
+  grantXp,
+  hpBonusPercent,
   joinBonusChance,
+  maxHpForLevel,
   resolveMenuWeapon,
   rollJoinLoadout,
   suggestedPlayerName,
   weaponsOfferedAtLevel,
+  xpToNextLevel,
 } from "./progression";
 
 describe("account progression", () => {
@@ -34,11 +40,32 @@ describe("account progression", () => {
     expect(resolveMenuWeapon(undefined, 12).id).toBe(STARTER_WEAPON_ID);
   });
 
-  it("adds kill xp and carries whole levels", () => {
-    expect(grantKillXp(1, 0)).toEqual({ level: 1, xp: XP_PER_KILL });
-    expect(grantKillXp(1, 80)).toEqual({ level: 2, xp: 20 });
-    expect(grantKillXp(3, 90)).toEqual({ level: 4, xp: 30 });
-    expect(formatAccountLevel(3, 40)).toBe(`Level 3 · 40/${XP_PER_LEVEL}`);
+  it("raises the xp needed per level and stops at 20", () => {
+    expect(xpToNextLevel(1)).toBe(XP_PER_LEVEL);
+    expect(xpToNextLevel(2)).toBe(125);
+    expect(xpToNextLevel(3)).toBe(150);
+    expect(xpToNextLevel(19)).toBe(550);
+    expect(xpToNextLevel(20)).toBe(0);
+    expect(grantXp(1, 0, XP_PER_KILL)).toEqual({ level: 1, xp: XP_PER_KILL });
+    expect(grantXp(1, 80, XP_PER_KILL)).toEqual({ level: 2, xp: 20 });
+    expect(grantXp(3, 140, XP_PER_KILL)).toEqual({ level: 4, xp: 30 });
+    expect(grantXp(1, 0, XP_PER_WIN)).toEqual({ level: 2, xp: 50 });
+    expect(grantXp(20, 40, XP_PER_WIN)).toEqual({ level: MAX_LEVEL, xp: 0 });
+    expect(grantXp(19, 540, XP_PER_KILL)).toEqual({ level: MAX_LEVEL, xp: 0 });
+  });
+
+  it("formats level, xp, and the hp bonus", () => {
+    expect(formatAccountLevel(1, 0)).toBe(`Level 1 · 0/${XP_PER_LEVEL} · +1% HP`);
+    expect(formatAccountLevel(3, 40)).toBe("Level 3 · 40/150 · +3% HP");
+    expect(formatAccountLevel(20, 80)).toBe("Level 20 · MAX · +20% HP");
+  });
+
+  it("gives 1% more max hp per level and none to guests", () => {
+    expect(hpBonusPercent(0)).toBe(0);
+    expect(maxHpForLevel(0)).toBe(PLAYER_MAX_HP);
+    expect(maxHpForLevel(1)).toBe(101);
+    expect(maxHpForLevel(20)).toBe(120);
+    expect(maxHpForLevel(99)).toBe(120);
   });
 
   it("raises the join bonus chance with level and caps it", () => {

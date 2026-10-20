@@ -158,14 +158,43 @@ export function armorCraftBlock(id: "lightArmor" | "heavyArmor", progress: Armor
   return undefined;
 }
 
+export const DEFAULT_HOTBAR_ORDER: readonly HeldSlot[] = HELD_SLOTS;
+
 export function isHeldSlot(id: string): id is HeldSlot {
   return (HELD_SLOTS as readonly string[]).includes(id);
 }
 
-export function cycleHeld(current: HeldSlot, direction: 1 | -1): HeldSlot {
-  const index = HELD_SLOTS.indexOf(current);
-  const next = (index + direction + HELD_SLOTS.length) % HELD_SLOTS.length;
-  return HELD_SLOTS[next] ?? "gun";
+/** Keep known unique slots in the given order and append any that were missing. */
+export function normalizeHotbarOrder(value: unknown): HeldSlot[] {
+  const seen = new Set<HeldSlot>();
+  const order: HeldSlot[] = [];
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (typeof entry !== "string" || !isHeldSlot(entry) || seen.has(entry)) {
+        continue;
+      }
+      seen.add(entry);
+      order.push(entry);
+    }
+  }
+  for (const slot of HELD_SLOTS) {
+    if (!seen.has(slot)) {
+      order.push(slot);
+    }
+  }
+  return order;
+}
+
+export function hotbarKeyLabel(index: number): string {
+  return index === HELD_SLOTS.length - 1 ? "0" : String(index + 1);
+}
+
+export function cycleHeld(current: HeldSlot, direction: 1 | -1, order: readonly HeldSlot[] = HELD_SLOTS): HeldSlot {
+  const slots = normalizeHotbarOrder(order);
+  const index = slots.indexOf(current);
+  const from = index >= 0 ? index : 0;
+  const next = (from + direction + slots.length) % slots.length;
+  return slots[next] ?? "gun";
 }
 
 export function isGrenadeSlot(id: HeldSlot): id is "frag" | "flash" | "incendiary" {

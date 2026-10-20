@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { grantKillXp, sanitizePlayerName } from "@io-game/shared";
+import { grantXp, normalizeHotbarOrder, sanitizePlayerName, XP_PER_KILL, XP_PER_WIN } from "@io-game/shared";
 import { accountWeapons, accounts, getDb } from "./connection";
 
 export class AccountConflictError extends Error {
@@ -18,6 +18,7 @@ export type PublicAccount = {
   displayName: string;
   level: number;
   xp: number;
+  hotbarOrder: string[] | null;
 };
 
 export type AuthAccount = PublicAccount & {
@@ -41,6 +42,7 @@ export function publicAccount(account: AccountRow): PublicAccount {
     displayName: account.displayName,
     level: account.level,
     xp: account.xp,
+    hotbarOrder: account.hotbarOrder == null ? null : normalizeHotbarOrder(account.hotbarOrder),
   };
 }
 
@@ -120,14 +122,38 @@ export async function createEmailAccount(email: string, passwordHash: string): P
   }
 }
 
+export async function addAccountXp(accountId: string, amount: number): Promise<PublicAccount | null> {
+  return getDb().transaction(async (tx) => {
+    const rows = await tx.select().from(accounts).where(eq(accounts.id, accountId)).for("update").limit(1);
+    const account = rows[0];
+    if (!account) {
+      return null;
+    }
+    const next = grantXp(account.level, account.xp, amount);
+    if (next.level === account.level && next.xp === account.xp) {
+      return publicAccount(account);
+    }
+    await tx.update(accounts).set({ level: next.level, xp: next.xp }).where(eq(accounts.id, accountId));
+    return publicAccount({ ...account, level: next.level, xp: next.xp });
+  });
+}
+
 export async function addKillXp(accountId: string): Promise<PublicAccount | null> {
+  return addAccountXp(accountId, XP_PER_KILL);
+}
+
+export async function addWinXp(accountId: string): Promise<PublicAccount | null> {
+  return addAccountXp(accountId, XP_PER_WIN);
+}
+
+export async function setHotbarOrder(accountId: string, order: unknown): Promise<PublicAccount | null> {
   const account = await findAccountById(accountId);
   if (!account) {
     return null;
   }
-  const next = grantKillXp(account.level, account.xp);
-  await getDb().update(accounts).set({ level: next.level, xp: next.xp }).where(eq(accounts.id, accountId));
-  return publicAccount({ ...account, level: next.level, xp: next.xp });
+  const next = normalizeHotbarOrder(order);
+  await getDb().update(accounts).set({ hotbarOrder: next }).where(eq(accounts.id, accountId));
+  return publicAccount({ ...account, hotbarOrder: next });
 }
 
 export async function listWeapons(accountId: string): Promise<Array<{ weaponId: string; source: string }>> {

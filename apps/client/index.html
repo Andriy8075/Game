@@ -30,16 +30,19 @@
       }
 
       #menu {
-        min-height: 100%;
-        display: grid;
-        place-items: center;
+        height: 100%;
+        overflow: auto;
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
         background:
           radial-gradient(circle at top, rgba(129, 199, 132, 0.18), transparent 42%),
           #1b2416;
       }
 
       .menu-card {
-        width: min(420px, calc(100% - 32px));
+        width: min(520px, calc(100% - 32px));
+        margin: 24px 0;
         padding: 32px 28px 28px;
         background: #12180f;
         border: 1px solid #3e5230;
@@ -137,6 +140,12 @@
         color: #c8e6c9;
       }
 
+      #account-benefits {
+        margin: -8px 0 16px;
+        color: #ffe082;
+        font-size: 14px;
+      }
+
       .auth-error {
         margin: 12px 0 0;
         color: #ffab91;
@@ -174,9 +183,67 @@
         flex: none;
       }
 
+      .menu-card .hotbar-hint {
+        margin: 0 0 10px;
+        font-size: 13px;
+      }
+
+      .hotbar-slots {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 6px;
+      }
+
+      .hotbar-slots li {
+        display: grid;
+        grid-template-columns: 22px 40px 1fr auto auto;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 8px;
+        border: 1px solid #4e623c;
+        border-radius: 8px;
+        background: #1b2416;
+        cursor: grab;
+      }
+
+      .hotbar-slots li.dragging {
+        opacity: 0.45;
+      }
+
+      .hotbar-slots .key {
+        color: #ffe082;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .hotbar-slots img {
+        width: 40px;
+        height: 22px;
+        object-fit: contain;
+      }
+
+      .hotbar-slots .name {
+        color: #f5f5f5;
+        font-size: 14px;
+      }
+
+      .menu-card .hotbar-slots button {
+        margin-top: 0;
+        width: 32px;
+        padding: 6px 0;
+        font-size: 14px;
+      }
+
+      #hotbar-reset {
+        margin-top: 12px;
+      }
+
       #auth-form[hidden],
       #logout-button[hidden],
       #account-status[hidden],
+      #account-benefits[hidden],
       .auth-error[hidden] {
         display: none !important;
       }
@@ -188,6 +255,7 @@
         <form id="menu-form">
           <h1>.io Shooter</h1>
           <p id="menu-intro">Enter a name, then press play to join a waiting room. A battle royale starts 20 seconds after two players are ready. Last one standing wins.</p>
+          <p id="account-benefits">Sign up to earn XP from kills and wins, reach level 20 for up to +20% HP, unlock guns, and get join bonuses.</p>
           <p id="account-status" hidden></p>
           <label for="player-name">Name</label>
           <input
@@ -202,6 +270,12 @@
           <fieldset id="weapon-picker" class="weapon-picker">
             <legend>Weapon</legend>
             <div id="weapon-options" class="weapon-options"></div>
+          </fieldset>
+          <fieldset id="hotbar-picker" class="weapon-picker">
+            <legend>Hotbar</legend>
+            <p class="hotbar-hint">Drag slots or use the arrows. This order is saved on this device, and on your account when you sign in.</p>
+            <ol id="hotbar-slots" class="hotbar-slots"></ol>
+            <button id="hotbar-reset" class="secondary" type="button">Reset order</button>
           </fieldset>
           <button id="play-button" type="submit">Play</button>
           <div class="account-actions">

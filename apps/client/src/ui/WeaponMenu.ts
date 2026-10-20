@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { HELD_SHORT, HELD_SLOTS, getWeapon, type HeldSlot } from "@io-game/shared";
+import { HELD_SHORT, HELD_SLOTS, getWeapon, hotbarKeyLabel, normalizeHotbarOrder, type HeldSlot } from "@io-game/shared";
 import { applySlotIcon, blankSlotTexture } from "./slotIcons";
 
 const STYLE = {
@@ -14,6 +14,7 @@ const GAP = 6;
 const LABEL_SIZE = "11px";
 
 export class WeaponMenu {
+  private readonly order: HeldSlot[];
   private readonly slots: Phaser.GameObjects.Rectangle[] = [];
   private readonly labels: Phaser.GameObjects.Text[] = [];
   private readonly numbers: Phaser.GameObjects.Text[] = [];
@@ -25,16 +26,17 @@ export class WeaponMenu {
   private slotWidth = SLOT_W;
   private gunId: string;
 
-  constructor(private readonly scene: Phaser.Scene, weaponId: string) {
+  constructor(private readonly scene: Phaser.Scene, weaponId: string, order?: readonly HeldSlot[]) {
+    this.order = normalizeHotbarOrder(order ?? HELD_SLOTS);
     this.gunId = getWeapon(weaponId).id;
-    for (let index = 0; index < HELD_SLOTS.length; index += 1) {
-      const slot = HELD_SLOTS[index] ?? "gun";
+    for (let index = 0; index < this.order.length; index += 1) {
+      const slot = this.order[index] ?? "gun";
       const rect = scene.add.rectangle(0, 0, SLOT_W, SLOT_H, 0x263238);
       rect.setStrokeStyle(2, 0xc8e6c9);
       rect.setOrigin(0, 0);
       const icon = scene.add.image(0, 0, blankSlotTexture(scene));
       icon.setOrigin(0.5, 0.5);
-      const number = scene.add.text(0, 0, String(index + 1), { ...STYLE, fontSize: "11px", color: "#ffe082" });
+      const number = scene.add.text(0, 0, hotbarKeyLabel(index), { ...STYLE, fontSize: "11px", color: "#ffe082" });
       const label = scene.add.text(0, 0, this.slotLabel(slot), {
         ...STYLE,
         fontSize: LABEL_SIZE,
@@ -72,10 +74,11 @@ export class WeaponMenu {
 
   layout(width: number, height: number): void {
     const armorW = 108;
-    const gaps = (HELD_SLOTS.length - 1) * GAP;
-    const available = Math.max(HELD_SLOTS.length * 58, width - 32 - armorW - GAP);
-    this.slotWidth = Math.min(SLOT_W, (available - gaps) / HELD_SLOTS.length);
-    const barWidth = HELD_SLOTS.length * this.slotWidth + gaps;
+    const count = this.order.length;
+    const gaps = (count - 1) * GAP;
+    const available = Math.max(count * 58, width - 32 - armorW - GAP);
+    this.slotWidth = Math.min(SLOT_W, (available - gaps) / count);
+    const barWidth = count * this.slotWidth + gaps;
     const total = barWidth + GAP + armorW;
     this.originX = Math.max(16, (width - total) / 2);
     this.originY = Math.max(16, height - SLOT_H - 16);
@@ -106,8 +109,9 @@ export class WeaponMenu {
       return;
     }
     this.gunId = weapon.id;
-    const label = this.labels[0];
-    const icon = this.icons[0];
+    const gunIndex = this.order.indexOf("gun");
+    const label = this.labels[gunIndex];
+    const icon = this.icons[gunIndex];
     if (label) {
       label.setText(weapon.name);
       this.fitLabel(label);
@@ -123,7 +127,7 @@ export class WeaponMenu {
       if (!rect) {
         continue;
       }
-      const active = HELD_SLOTS[index] === slot;
+      const active = this.order[index] === slot;
       rect.setFillStyle(active ? 0x2e7d32 : 0x263238);
       rect.setStrokeStyle(2, active ? 0xffe082 : 0x90a4ae);
     }
@@ -141,7 +145,7 @@ export class WeaponMenu {
     const camera = this.scene.cameras.main;
     for (let index = 0; index < this.slots.length; index += 1) {
       const rect = this.slots[index];
-      const slot = HELD_SLOTS[index];
+      const slot = this.order[index];
       if (!rect || !slot) {
         continue;
       }

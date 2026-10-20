@@ -1,23 +1,62 @@
+import { PLAYER_MAX_HP } from "./constants";
 import { sanitizePlayerName } from "./playerName";
 import { STARTER_WEAPON_ID, getWeapon, weaponsForSource, type WeaponDef, type WeaponId } from "./weapons/catalog";
 
+export const MAX_LEVEL = 20;
 export const XP_PER_LEVEL = 100;
 export const XP_PER_KILL = 40;
+export const XP_PER_WIN = 150;
 
 const BONUS_CHANCE_CAP = 0.45;
 
-export function grantKillXp(level: number, xp: number): { level: number; xp: number } {
+export function xpToNextLevel(level: number): number {
+  const safe = Number.isFinite(level) && level >= 1 ? Math.floor(level) : 1;
+  if (safe >= MAX_LEVEL) {
+    return 0;
+  }
+  return XP_PER_LEVEL + 25 * (safe - 1);
+}
+
+export function grantXp(level: number, xp: number, amount: number): { level: number; xp: number } {
   let nextLevel = Number.isFinite(level) && level >= 1 ? Math.floor(level) : 1;
-  let nextXp = (Number.isFinite(xp) && xp > 0 ? xp : 0) + XP_PER_KILL;
-  while (nextXp >= XP_PER_LEVEL) {
-    nextXp -= XP_PER_LEVEL;
+  let nextXp = (Number.isFinite(xp) && xp > 0 ? xp : 0)
+    + (Number.isFinite(amount) && amount > 0 ? Math.floor(amount) : 0);
+  if (nextLevel >= MAX_LEVEL) {
+    return { level: MAX_LEVEL, xp: 0 };
+  }
+  while (nextLevel < MAX_LEVEL) {
+    const needed = xpToNextLevel(nextLevel);
+    if (nextXp < needed) {
+      break;
+    }
+    nextXp -= needed;
     nextLevel += 1;
+  }
+  if (nextLevel >= MAX_LEVEL) {
+    return { level: MAX_LEVEL, xp: 0 };
   }
   return { level: nextLevel, xp: nextXp };
 }
 
+export function hpBonusPercent(level: number): number {
+  if (!Number.isFinite(level) || level < 1) {
+    return 0;
+  }
+  return Math.min(MAX_LEVEL, Math.floor(level));
+}
+
+export function maxHpForLevel(level: number): number {
+  return Math.round(PLAYER_MAX_HP * (1 + 0.01 * hpBonusPercent(level)));
+}
+
 export function formatAccountLevel(level: number, xp: number): string {
-  return `Level ${level} · ${xp}/${XP_PER_LEVEL}`;
+  const safeLevel = Number.isFinite(level) && level >= 1 ? Math.min(MAX_LEVEL, Math.floor(level)) : 1;
+  const hp = `+${hpBonusPercent(safeLevel)}% HP`;
+  if (safeLevel >= MAX_LEVEL) {
+    return `Level ${MAX_LEVEL} · MAX · ${hp}`;
+  }
+  const safeXp = Number.isFinite(xp) && xp > 0 ? Math.floor(xp) : 0;
+  return `Level ${safeLevel} · ${safeXp}/${xpToNextLevel(safeLevel)} · ${hp}`;
 }
 
 export function suggestedPlayerName(displayName: string | undefined): string {

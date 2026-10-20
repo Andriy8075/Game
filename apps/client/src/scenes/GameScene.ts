@@ -5,6 +5,7 @@ import {
   GAME_MAP,
   HARVEST,
   HELD_SLOTS,
+  hotbarKeyLabel,
   INTERP_DELAY_MS,
   MATCH_ENDED,
   MATCH_PLAYING,
@@ -19,6 +20,7 @@ import {
   getWeapon,
   isGrenadeSlot,
   isHeldSlot,
+  normalizeHotbarOrder,
   isInSmoke,
   mapWithWalls,
   nearestHarvestable,
@@ -127,9 +129,10 @@ export class GameScene extends Phaser.Scene {
   private lobby!: LobbyOverlay;
   private results!: ResultPanel;
   private smoke!: SmokeView;
-  private slotKeys: Phaser.Input.Keyboard.Key[] = [];
+  private slotKeys: Array<{ key: Phaser.Input.Keyboard.Key; index: number }> = [];
   private actors!: ActorsView;
   private held: HeldSlot = "gun";
+  private hotbarOrder = [...HELD_SLOTS];
   private playerName = DEFAULT_PLAYER_NAME;
   private weaponId: string = STARTER_WEAPON_ID;
   private pendingFire = false;
@@ -152,11 +155,12 @@ export class GameScene extends Phaser.Scene {
     this.playerName = sanitizePlayerName(this.registry.get("playerName"));
     const chosenWeapon = this.registry.get("weaponId");
     this.weaponId = typeof chosenWeapon === "string" ? chosenWeapon : STARTER_WEAPON_ID;
+    this.hotbarOrder = normalizeHotbarOrder(this.registry.get("hotbarOrder"));
     drawWorld(this);
     this.actors = new ActorsView(this);
     this.smoke = new SmokeView(this);
     this.hud = new Hud(this);
-    this.weaponMenu = new WeaponMenu(this, this.weaponId);
+    this.weaponMenu = new WeaponMenu(this, this.weaponId, this.hotbarOrder);
     this.craftMenu = new CraftMenu(this, (action) => this.sendAction(action));
     this.lobby = new LobbyOverlay(this);
     this.results = new ResultPanel(this);
@@ -190,6 +194,7 @@ export class GameScene extends Phaser.Scene {
       Phaser.Input.Keyboard.KeyCodes.SEVEN,
       Phaser.Input.Keyboard.KeyCodes.EIGHT,
       Phaser.Input.Keyboard.KeyCodes.NINE,
+      Phaser.Input.Keyboard.KeyCodes.ZERO,
       Phaser.Input.Keyboard.KeyCodes.NUMPAD_ONE,
       Phaser.Input.Keyboard.KeyCodes.NUMPAD_TWO,
       Phaser.Input.Keyboard.KeyCodes.NUMPAD_THREE,
@@ -199,8 +204,12 @@ export class GameScene extends Phaser.Scene {
       Phaser.Input.Keyboard.KeyCodes.NUMPAD_SEVEN,
       Phaser.Input.Keyboard.KeyCodes.NUMPAD_EIGHT,
       Phaser.Input.Keyboard.KeyCodes.NUMPAD_NINE,
+      Phaser.Input.Keyboard.KeyCodes.NUMPAD_ZERO,
     ];
-    this.slotKeys = digitCodes.map((code) => keyboard.addKey(code));
+    this.slotKeys = digitCodes.map((code, index) => ({
+      key: keyboard.addKey(code),
+      index: index % 10,
+    }));
 
     this.scale.on("resize", (size: Phaser.Structs.Size) => {
       this.hud.layout(size.width);
@@ -252,7 +261,7 @@ export class GameScene extends Phaser.Scene {
       if (this.craftMenu.handleWheel(pointer.x, pointer.y, deltaY)) {
         return;
       }
-      this.selectHeld(cycleHeld(this.held, deltaY > 0 ? 1 : -1));
+      this.selectHeld(cycleHeld(this.held, deltaY > 0 ? 1 : -1, this.hotbarOrder));
     });
 
     void this.connect();
@@ -389,7 +398,8 @@ export class GameScene extends Phaser.Scene {
         craftedHeavy: player.craftedHeavy,
       }, player.weaponId, hired);
       const near = nearestHarvestable(x, y, (id) => state.nodes.get(id)?.remaining ?? 0);
-      const armKey = HELD_SLOTS.indexOf("arm") + 1;
+      const armIndex = this.hotbarOrder.indexOf("arm");
+      const armKey = hotbarKeyLabel(armIndex < 0 ? 0 : armIndex);
       const payment = chooseWallPayment(inventory);
       const inSmoke = isInSmoke(x, y, state.zoneRadius);
       if (inSmoke) {
@@ -419,10 +429,9 @@ export class GameScene extends Phaser.Scene {
     if (Phaser.Input.Keyboard.JustDown(keys.C)) {
       this.craftMenu.toggle();
     }
-    for (let index = 0; index < this.slotKeys.length; index += 1) {
-      const key = this.slotKeys[index];
-      const slot = HELD_SLOTS[index % HELD_SLOTS.length];
-      if (key && slot && Phaser.Input.Keyboard.JustDown(key)) {
+    for (const { key, index } of this.slotKeys) {
+      const slot = this.hotbarOrder[index];
+      if (slot && Phaser.Input.Keyboard.JustDown(key)) {
         this.selectHeld(slot);
       }
     }

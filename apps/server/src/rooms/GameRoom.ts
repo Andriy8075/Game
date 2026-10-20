@@ -43,7 +43,6 @@ import {
   PICKUP_RESPAWN_MS,
   PICKUP_SLOTS,
   PLAYER_COLORS,
-  PLAYER_MAX_HP,
   PLAYER_RADIUS,
   RAMSPIKE_DISTANCE,
   SLOW_SPEED_FACTOR,
@@ -71,6 +70,7 @@ import {
   isHeldSlot,
   isStackedCraft,
   mapWithWalls,
+  maxHpForLevel,
   muzzleOrigin,
   nearestHarvestable,
   nextWaypoint,
@@ -90,6 +90,8 @@ import {
   wallPlacementBlock,
   wallRectForAim,
   wrapAngle,
+  XP_PER_KILL,
+  XP_PER_WIN,
   zoneAt,
   type BlastEvent,
   type CraftedId,
@@ -97,7 +99,7 @@ import {
   type JoinOptions,
   type ShotEvent,
 } from "@io-game/shared";
-import { addKillXp, findAccountById } from "../accounts/store";
+import { addAccountXp, findAccountById } from "../accounts/store";
 import { Bot, GameState, HazardZone, Inventory, NodeState, PlacedWall, Player, ThrownGrenade, WeaponPickup } from "./schema/GameState";
 
 type StepContext = {
@@ -279,8 +281,9 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     player.angle = 0;
     player.color = PLAYER_COLORS[this.colorIndex % PLAYER_COLORS.length]!;
     player.name = sanitizePlayerName(options?.name);
-    player.hp = PLAYER_MAX_HP;
-    player.maxHp = PLAYER_MAX_HP;
+    const maxHp = maxHpForLevel(level);
+    player.hp = maxHp;
+    player.maxHp = maxHp;
     player.inventory = new Inventory();
     this.equipWeapon(player, weapon.id);
     this.spawnWeaponId.set(client.sessionId, weapon.id);
@@ -542,6 +545,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       this.state.winnerName = winner.player.name;
       this.state.winnerKills = winner.player.kills;
       this.broadcast("notice", `${winner.player.name} wins the match`);
+      this.awardXp(winner.id, XP_PER_WIN);
     }
   }
 
@@ -1275,13 +1279,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
         killer.kills += 1;
         victim.killerName = killer.name;
         this.broadcast("notice", `${killer.name} downed ${victim.name}`);
-        const accountId = this.accountIds.get(creditedKiller);
-        if (accountId) {
-          void addKillXp(accountId).catch((error: unknown) => {
-            const message = error instanceof Error ? error.message : String(error);
-            console.warn(`Could not save kill XP: ${message}`);
-          });
-        }
+        this.awardXp(creditedKiller, XP_PER_KILL);
       } else {
         victim.killerName = "";
       }
@@ -1295,6 +1293,17 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     const weapon = getWeapon(weaponId);
     player.weaponId = weapon.id;
     player.damage = weapon.damage;
+  }
+
+  private awardXp(sessionId: string, amount: number): void {
+    const accountId = this.accountIds.get(sessionId);
+    if (!accountId) {
+      return;
+    }
+    void addAccountXp(accountId, amount).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`Could not save account XP: ${message}`);
+    });
   }
 
   private readAccount(client: Client): { id: string; level: number } | undefined {

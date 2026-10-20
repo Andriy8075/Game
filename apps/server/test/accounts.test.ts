@@ -2,17 +2,19 @@ import pg from "pg";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type ColyseusTestServer } from "@colyseus/testing";
-import { GAME_ROOM_NAME, LIGHT_ARMOR, MoveInput, PLAYER_DAMAGE, STARTER_WEAPON_ID, XP_PER_KILL } from "@io-game/shared";
+import { GAME_ROOM_NAME, LIGHT_ARMOR, MoveInput, PLAYER_DAMAGE, PLAYER_MAX_HP, STARTER_WEAPON_ID, XP_PER_KILL, XP_PER_WIN } from "@io-game/shared";
 import { createGameServer } from "../src/app.config";
 import { accounts, databaseUrl, getDb, migrateAccounts } from "../src/accounts/connection";
 import {
   AccountConflictError,
   addKillXp,
+  addWinXp,
   connectGoogleAccount,
   createEmailAccount,
   findAccountByEmail,
   findAccountById,
   listWeapons,
+  setHotbarOrder,
 } from "../src/accounts/store";
 import { GameRoom } from "../src/rooms/GameRoom";
 import type { GameState as ServerGameState } from "../src/rooms/schema/GameState";
@@ -58,6 +60,7 @@ describe.skipIf(!ready)("account store", () => {
     expect(found?.id).toBe(created.id);
     expect(found?.level).toBe(1);
     expect(found?.xp).toBe(0);
+    expect(found?.hotbarOrder).toBeNull();
     expect(found?.passwordHash).toBe("scrypt$salt$hash");
     expect(await listWeapons(created.id)).toEqual([]);
   });
@@ -72,6 +75,27 @@ describe.skipIf(!ready)("account store", () => {
     expect(twice).toMatchObject({ level: 1, xp: XP_PER_KILL * 2 });
     expect(third).toMatchObject({ level: 2, xp: 20 });
     expect(await addKillXp("missing-account")).toBeNull();
+  });
+
+  it("adds win xp and keeps kill plus win when they overlap", async () => {
+    const created = await createEmailAccount("ada@example.com", "scrypt$salt$hash");
+    const win = await addWinXp(created.id);
+    expect(win).toMatchObject({ level: 2, xp: 50 });
+
+    const other = await createEmailAccount("nova@example.com", "scrypt$salt$hash");
+    await Promise.all([addKillXp(other.id), addWinXp(other.id)]);
+    const found = await findAccountById(other.id);
+    expect(found?.level).toBe(2);
+    expect(found?.xp).toBe(XP_PER_KILL + XP_PER_WIN - 100);
+  });
+
+  it("saves a normalized hotbar order", async () => {
+    const created = await createEmailAccount("ada@example.com", "scrypt$salt$hash");
+    const saved = await setHotbarOrder(created.id, ["arm", "gun", "arm", "missing"]);
+    expect(saved?.hotbarOrder?.[0]).toBe("arm");
+    expect(saved?.hotbarOrder?.[1]).toBe("gun");
+    expect(saved?.hotbarOrder).toHaveLength(10);
+    expect(await setHotbarOrder("missing-account", ["arm"])).toBeNull();
   });
 
   it("rejects a duplicate email", async () => {
@@ -123,7 +147,7 @@ describe.skipIf(!ready)("account http", () => {
   it("registers and logs in with email and password", async () => {
     const email = "pilot@example.com";
     const registered = await colyseus.sdk.auth.registerWithEmailAndPassword(email, "secret12");
-    expect(registered.user).toMatchObject({ email, level: 1, xp: 0, displayName: "pilot" });
+    expect(registered.user).toMatchObject({ email, level: 1, xp: 0, displayName: "pilot", hotbarOrder: null });
     expect(registered.token).toBeTruthy();
 
     await colyseus.sdk.auth.signOut();
@@ -251,9 +275,9 @@ describe.skipIf(!ready)("account http", () => {
     sendShot(shooterClient, 0);
     await waitTicks(room, 4);
 
-    const afterKill = await waitForXp(registered.user.id, XP_PER_KILL);
-    expect(afterKill?.level).toBe(1);
-    expect(afterKill?.xp).toBe(XP_PER_KILL);
+    const afterKill = await waitForAccount(registered.user.id, { level: 2, xp: XP_PER_KILL + XP_PER_WIN - 100 });
+    expect(afterKill?.level).toBe(2);
+    expect(afterKill?.xp).toBe(XP_PER_KILL + XP_PER_WIN - 100);
     expect(room.state.phase).toBe("ended");
 
     const rematch = (await colyseus.createRoom<ServerGameState>(GAME_ROOM_NAME, { manualTime: true })) as unknown as GameRoom;
@@ -280,8 +304,42 @@ describe.skipIf(!ready)("account http", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     const afterDeath = await findAccountById(registered.user.id);
-    expect(afterDeath?.xp).toBe(XP_PER_KILL);
-    expect(afterDeath?.level).toBe(1);
+    expect(afterDeath?.xp).toBe(XP_PER_KILL + XP_PER_WIN - 100);
+    expect(afterDeath?.level).toBe(2);
+  });
+
+  it("gives more hit points to a high-level account than to a guest", async () => {
+    const email = "pilot@example.com";
+    const registered = await colyseus.sdk.auth.registerWithEmailAndPassword(email, "secret12");
+    await getDb().update(accounts).set({ level: 20 }).where(eq(accounts.id, registered.user.id));
+    const room = await colyseus.createRoom<ServerGameState>(GAME_ROOM_NAME, { manualTime: true });
+    const high = await colyseus.connectTo(room, { name: "Ada" });
+    expect(room.state.players.get(high.sessionId)?.maxHp).toBe(120);
+    expect(room.state.players.get(high.sessionId)?.hp).toBe(120);
+
+    await colyseus.sdk.auth.signOut();
+    const guest = await colyseus.connectTo(room, { name: "Guest" });
+    expect(room.state.players.get(guest.sessionId)?.maxHp).toBe(PLAYER_MAX_HP);
+    expect(room.state.players.get(guest.sessionId)?.hp).toBe(PLAYER_MAX_HP);
+  });
+
+  it("saves a hotbar order on the account and returns it with userdata", async () => {
+    await colyseus.sdk.auth.registerWithEmailAndPassword("pilot@example.com", "secret12");
+    const saved = await colyseus.sdk.http.put("/account/hotbar", {
+      body: { order: ["arm", "gun", "arm", "nope"] },
+    });
+    expect(saved.status).toBe(200);
+    const order = (saved.data as { hotbarOrder: string[] }).hotbarOrder;
+    expect(order[0]).toBe("arm");
+    expect(order[1]).toBe("gun");
+    expect(order).toHaveLength(10);
+
+    const userdata = await colyseus.sdk.auth.getUserData<{ hotbarOrder: string[] }>();
+    expect(userdata.user.hotbarOrder[0]).toBe("arm");
+    expect(userdata.user.hotbarOrder).toEqual(order);
+
+    await colyseus.sdk.auth.signOut();
+    await expect(colyseus.sdk.http.put("/account/hotbar", { body: { order: ["arm"] } })).rejects.toThrow();
   });
 
   it("rejects a bad token", async () => {
@@ -291,10 +349,10 @@ describe.skipIf(!ready)("account http", () => {
   });
 });
 
-async function waitForXp(accountId: string, xp: number) {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+async function waitForAccount(accountId: string, expected: { level: number; xp: number }) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
     const account = await findAccountById(accountId);
-    if (account?.xp === xp) {
+    if (account?.xp === expected.xp && account.level === expected.level) {
       return account;
     }
     await new Promise((resolve) => setTimeout(resolve, 25));

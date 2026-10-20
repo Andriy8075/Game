@@ -8,14 +8,17 @@ import {
   canAfford,
   chooseWallPayment,
   cycleHeld,
+  DEFAULT_HOTBAR_ORDER,
   formatCost,
   gatherRadius,
   HARVEST,
   HELD_LABELS,
   HELD_SHORT,
   HELD_SLOTS,
+  hotbarKeyLabel,
   isGrenadeSlot,
   isHeldSlot,
+  normalizeHotbarOrder,
   getRecipe,
   nearestHarvestable,
   payCost,
@@ -160,6 +163,29 @@ describe("held slots", () => {
       backward.push(slot);
     }
     expect(backward).toEqual(["arm", "wall", "ramspike", "gale", "bastion", "bandage", "incendiary", "flash", "frag", "gun"]);
+  });
+
+  it("normalizes a custom hotbar and cycles through it", () => {
+    expect(normalizeHotbarOrder(["arm", "gun", "arm", "missing", 3])).toEqual([
+      "arm",
+      "gun",
+      "frag",
+      "flash",
+      "incendiary",
+      "bandage",
+      "bastion",
+      "gale",
+      "ramspike",
+      "wall",
+    ]);
+    expect(normalizeHotbarOrder(undefined)).toEqual([...DEFAULT_HOTBAR_ORDER]);
+    expect(hotbarKeyLabel(0)).toBe("1");
+    expect(hotbarKeyLabel(9)).toBe("0");
+
+    const custom = normalizeHotbarOrder(["arm", "wall", "gun"]);
+    expect(cycleHeld("arm", 1, custom)).toBe("wall");
+    expect(cycleHeld("gun", -1, custom)).toBe("wall");
+    expect(cycleHeld("gun", 1, custom)).toBe("frag");
   });
 
   it("accepts the weapon menu and rejects armor as something to hold", () => {

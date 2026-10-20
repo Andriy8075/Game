@@ -1,16 +1,24 @@
 import Phaser from "phaser";
 import {
+  DEFAULT_HOTBAR_ORDER,
   DEFAULT_PLAYER_NAME,
+  HELD_SHORT,
   PLAYER_NAME_MAX_LENGTH,
   STARTER_WEAPON_ID,
   formatAccountLevel,
   formatWeaponStats,
+  getWeapon,
+  hotbarKeyLabel,
+  normalizeHotbarOrder,
   sanitizePlayerName,
   suggestedPlayerName,
   weaponsOfferedAtLevel,
+  type HeldSlot,
 } from "@io-game/shared";
+import { loadLocalOrder, saveAccountOrder, saveLocalOrder } from "./hotbarStore";
 import { GameScene } from "./scenes/GameScene";
 import { getGameClient, getServerUrl } from "./network/GameClient";
+import { slotIconDataUrl } from "./ui/slotIcons";
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -30,6 +38,7 @@ type AccountUser = {
   displayName?: string;
   level?: number;
   xp?: number;
+  hotbarOrder?: string[] | null;
 };
 
 type AuthMode = "signup" | "login";
@@ -54,8 +63,11 @@ const menu = requiredElement<HTMLElement>("#menu");
 const form = requiredElement<HTMLFormElement>("#menu-form");
 const nameInput = requiredElement<HTMLInputElement>("#player-name");
 const weaponOptions = requiredElement<HTMLElement>("#weapon-options");
+const hotbarList = requiredElement<HTMLOListElement>("#hotbar-slots");
+const hotbarReset = requiredElement<HTMLButtonElement>("#hotbar-reset");
 const gameRoot = requiredElement<HTMLElement>("#game");
 const accountStatus = requiredElement<HTMLElement>("#account-status");
+const accountBenefits = requiredElement<HTMLElement>("#account-benefits");
 const showSignup = requiredElement<HTMLButtonElement>("#show-signup");
 const showLogin = requiredElement<HTMLButtonElement>("#show-login");
 const logoutButton = requiredElement<HTMLButtonElement>("#logout-button");
@@ -78,6 +90,9 @@ let authMode: AuthMode = "signup";
 let authBusy = false;
 let signedIn = false;
 let accountLevel = 0;
+let hotbarOrder = loadLocalOrder();
+let dragFrom: number | undefined;
+let saveTimer: number | undefined;
 
 function selectedWeaponId(): string {
   const selected = weaponOptions.querySelector<HTMLInputElement>("input:checked");
@@ -104,6 +119,114 @@ function renderWeapons(level: number): void {
       first.checked = true;
     }
   }
+  renderHotbar();
+}
+
+function slotLabel(slot: HeldSlot): string {
+  return slot === "gun" ? getWeapon(selectedWeaponId()).name : HELD_SHORT[slot];
+}
+
+function slotIcon(slot: HeldSlot): string {
+  return slot === "gun" ? selectedWeaponId() : slot;
+}
+
+function renderHotbar(): void {
+  hotbarList.replaceChildren();
+  for (let index = 0; index < hotbarOrder.length; index += 1) {
+    const slot = hotbarOrder[index];
+    if (!slot) {
+      continue;
+    }
+    const item = document.createElement("li");
+    item.draggable = true;
+    item.dataset.index = String(index);
+
+    const key = document.createElement("span");
+    key.className = "key";
+    key.textContent = hotbarKeyLabel(index);
+
+    const icon = document.createElement("img");
+    icon.src = slotIconDataUrl(slotIcon(slot));
+    icon.alt = "";
+
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = slotLabel(slot);
+
+    const up = document.createElement("button");
+    up.type = "button";
+    up.textContent = "↑";
+    up.setAttribute("aria-label", `Move ${slotLabel(slot)} up`);
+    up.disabled = index === 0;
+    up.addEventListener("click", () => moveSlot(index, index - 1));
+
+    const down = document.createElement("button");
+    down.type = "button";
+    down.textContent = "↓";
+    down.setAttribute("aria-label", `Move ${slotLabel(slot)} down`);
+    down.disabled = index === hotbarOrder.length - 1;
+    down.addEventListener("click", () => moveSlot(index, index + 1));
+
+    item.addEventListener("dragstart", (event) => {
+      dragFrom = index;
+      item.classList.add("dragging");
+      event.dataTransfer?.setData("text/plain", String(index));
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+      }
+    });
+    item.addEventListener("dragend", () => {
+      dragFrom = undefined;
+      item.classList.remove("dragging");
+    });
+    item.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "move";
+      }
+    });
+    item.addEventListener("drop", (event) => {
+      event.preventDefault();
+      const from = dragFrom ?? Number(event.dataTransfer?.getData("text/plain"));
+      moveSlot(from, index);
+      dragFrom = undefined;
+    });
+
+    item.append(key, icon, name, up, down);
+    hotbarList.append(item);
+  }
+}
+
+function commitHotbar(order: HeldSlot[], persistAccount: boolean): void {
+  hotbarOrder = saveLocalOrder(order);
+  renderHotbar();
+  if (persistAccount && signedIn) {
+    window.clearTimeout(saveTimer);
+    saveTimer = window.setTimeout(() => {
+      void saveAccountOrder(hotbarOrder).catch(() => undefined);
+    }, 400);
+  }
+}
+
+function moveSlot(from: number, to: number): void {
+  if (!Number.isInteger(from) || !Number.isInteger(to) || from === to || from < 0 || to < 0 || from >= hotbarOrder.length || to >= hotbarOrder.length) {
+    return;
+  }
+  const next = [...hotbarOrder];
+  const [moved] = next.splice(from, 1);
+  if (!moved) {
+    return;
+  }
+  next.splice(to, 0, moved);
+  commitHotbar(next, true);
+}
+
+function applyAccountHotbar(user: AccountUser): void {
+  if (user.hotbarOrder != null) {
+    commitHotbar(normalizeHotbarOrder(user.hotbarOrder), false);
+    return;
+  }
+  void saveAccountOrder(hotbarOrder).catch(() => undefined);
 }
 
 function leaveMatch(): void {
@@ -141,6 +264,7 @@ function showSignedIn(user: AccountUser): void {
   accountLevel = level;
   accountStatus.hidden = false;
   accountStatus.textContent = `Signed in as ${email} · ${formatAccountLevel(level, xp)}`;
+  accountBenefits.hidden = true;
   showSignup.hidden = true;
   showLogin.hidden = true;
   logoutButton.hidden = false;
@@ -150,6 +274,7 @@ function showSignedIn(user: AccountUser): void {
     nameInput.value = suggestedPlayerName(user.displayName);
   }
   renderWeapons(level);
+  applyAccountHotbar(user);
 }
 
 function showSignedOut(): void {
@@ -157,6 +282,7 @@ function showSignedOut(): void {
   accountLevel = 0;
   accountStatus.hidden = true;
   accountStatus.textContent = "";
+  accountBenefits.hidden = false;
   showSignup.hidden = false;
   showLogin.hidden = false;
   logoutButton.hidden = true;
@@ -247,6 +373,14 @@ logoutButton.addEventListener("click", () => {
   });
 });
 
+weaponOptions.addEventListener("change", () => {
+  renderHotbar();
+});
+
+hotbarReset.addEventListener("click", () => {
+  commitHotbar([...DEFAULT_HOTBAR_ORDER], true);
+});
+
 void client.auth
   .getUserData<AccountUser>()
   .then((response) => {
@@ -277,6 +411,7 @@ form.addEventListener("submit", (event) => {
       preBoot: (instance) => {
         instance.registry.set("playerName", playerName);
         instance.registry.set("weaponId", weaponId);
+        instance.registry.set("hotbarOrder", hotbarOrder);
         instance.registry.set("onLeaveMatch", leaveMatch);
       },
     },
@@ -284,3 +419,4 @@ form.addEventListener("submit", (event) => {
 });
 
 renderWeapons(signedIn ? accountLevel : 0);
+renderHotbar();
