@@ -13,11 +13,11 @@ export type ZonePhaseSpec = {
 
 /** Hold, then shrink toward the next radius. Damage applies while standing in smoke during that phase. */
 export const ZONE_PHASES: readonly ZonePhaseSpec[] = [
-  { holdMs: 45_000, shrinkMs: 40_000, targetRadius: 1100, damage: 2 },
-  { holdMs: 30_000, shrinkMs: 30_000, targetRadius: 700, damage: 4 },
-  { holdMs: 20_000, shrinkMs: 25_000, targetRadius: 380, damage: 7 },
-  { holdMs: 15_000, shrinkMs: 20_000, targetRadius: 180, damage: 10 },
-  { holdMs: 10_000, shrinkMs: 15_000, targetRadius: 60, damage: 15 },
+  { holdMs: 20_000, shrinkMs: 28_000, targetRadius: 1100, damage: 2 },
+  { holdMs: 12_000, shrinkMs: 22_000, targetRadius: 650, damage: 4 },
+  { holdMs: 10_000, shrinkMs: 18_000, targetRadius: 320, damage: 7 },
+  { holdMs: 8_000, shrinkMs: 14_000, targetRadius: 120, damage: 12 },
+  { holdMs: 5_000, shrinkMs: 12_000, targetRadius: 0, damage: 18 },
 ];
 
 export type ZoneSnapshot = {
@@ -70,5 +70,8 @@ export function zoneAt(elapsedMs: number): ZoneSnapshot {
 }
 
 export function isInSmoke(x: number, y: number, radius: number): boolean {
+  if (radius <= 0) {
+    return true;
+  }
   return Math.hypot(x - ZONE_CENTER_X, y - ZONE_CENTER_Y) > radius;
 }

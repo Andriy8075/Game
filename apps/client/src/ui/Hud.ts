@@ -106,7 +106,11 @@ export class Hud {
     this.alive.setText(`Alive ${count}`);
   }
 
-  setZone(shrinking: boolean, nextSec: number): void {
+  setZone(shrinking: boolean, nextSec: number, radius = Number.POSITIVE_INFINITY): void {
+    if (radius <= 0) {
+      this.zone.setText("Smoke has closed");
+      return;
+    }
     if (shrinking) {
       this.zone.setText("Smoke is closing");
       return;

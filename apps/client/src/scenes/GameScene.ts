@@ -330,7 +330,7 @@ export class GameScene extends Phaser.Scene {
       alive: player.alive !== false,
     })));
     this.hud.setAlive(state.aliveCount);
-    this.hud.setZone(state.zoneShrinking, state.zoneNextSec);
+    this.hud.setZone(state.zoneShrinking, state.zoneNextSec, state.zoneRadius);
     this.actors.syncNodes(state.nodes);
     this.actors.syncGrenades(state.grenades);
     this.actors.syncHazards(state.hazards);

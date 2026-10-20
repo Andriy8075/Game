@@ -33,7 +33,7 @@ Trees yield wood, rocks yield stone, and the copper and yellow veins yield iron 
 
 The barricade preview is only drawn for the player who has that slot selected. It does not stop bullets or movement. The placed barricade is shared with everyone else: it blocks movement and bullets, has 40 hit points, and breaks after a few shots, so a player shut inside can shoot their way out. Each player can keep 8 walls up.
 
-Smoke closes in from the map edges and corners toward the center. Standing in the smoke damages you, so players have to fight their way inward. There are no respawns. When you are eliminated, the camera freezes and an Exit button returns you to the menu. The last living player is the winner.
+Smoke closes in from the map edges and corners toward the center, then finishes over the whole map so no safe spot remains. Standing in the smoke damages you, so players have to fight their way inward. There are no respawns. When you are eliminated, the camera freezes and an Exit button returns you to the menu. The last living player is the winner.
 
 The local player stays centered until they die. The map, obstacles, and other players scroll around them. The server owns positions, collisions, hit detection, inventories, crafting, the match timer, and the smoke zone. Obstacles block both movement and bullets.
 

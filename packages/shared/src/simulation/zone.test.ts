@@ -39,19 +39,22 @@ describe("smoke zone", () => {
     expect(after.phaseIndex).toBe(1);
   });
 
-  it("stays on the final circle after the last shrink", () => {
+  it("closes the whole map after the last shrink", () => {
     const total = ZONE_PHASES.reduce((sum, phase) => sum + phase.holdMs + phase.shrinkMs, 0);
     const last = ZONE_PHASES[ZONE_PHASES.length - 1]!;
     const snap = zoneAt(total + 60_000);
-    expect(snap.radius).toBe(last.targetRadius);
+    expect(last.targetRadius).toBe(0);
+    expect(snap.radius).toBe(0);
     expect(snap.shrinking).toBe(false);
     expect(snap.damage).toBe(last.damage);
     expect(snap.nextChangeMs).toBe(0);
+    expect(isInSmoke(ZONE_CENTER_X, ZONE_CENTER_Y, snap.radius)).toBe(true);
   });
 
   it("treats the map center as safe and the corners as smoked once the circle is small", () => {
     expect(isInSmoke(ZONE_CENTER_X, ZONE_CENTER_Y, 400)).toBe(false);
     expect(isInSmoke(0, 0, 400)).toBe(true);
+    expect(isInSmoke(ZONE_CENTER_X, ZONE_CENTER_Y, 0)).toBe(true);
   });
 });
 
