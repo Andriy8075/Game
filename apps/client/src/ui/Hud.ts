@@ -9,33 +9,39 @@ const STYLE = {
 
 export class Hud {
   private readonly status: Phaser.GameObjects.Text;
+  private readonly alive: Phaser.GameObjects.Text;
+  private readonly zone: Phaser.GameObjects.Text;
   private readonly vitals: Phaser.GameObjects.Text;
   private readonly resources: Phaser.GameObjects.Text;
   private readonly items: Phaser.GameObjects.Text;
   private readonly held: Phaser.GameObjects.Text;
+  private readonly help: Phaser.GameObjects.Text;
   private readonly prompt: Phaser.GameObjects.Text;
   private readonly notice: Phaser.GameObjects.Text;
   private readonly craftButton: Phaser.GameObjects.Rectangle;
   private readonly craftLabel: Phaser.GameObjects.Text;
   private readonly scoreboard: Phaser.GameObjects.Text;
-  private resultRoot?: Phaser.GameObjects.Container;
+  private readonly playObjects: Phaser.GameObjects.GameObject[];
 
   constructor(private readonly scene: Phaser.Scene) {
     this.status = this.pin(scene.add.text(16, 16, "Connecting...", { ...STYLE, fontSize: "16px", backgroundColor: "#00000088", padding: { x: 8, y: 6 } }));
-    this.vitals = this.pin(scene.add.text(16, 52, "", { ...STYLE, color: "#c8e6c9", backgroundColor: "#00000066", padding: { x: 8, y: 6 } }));
-    this.resources = this.pin(scene.add.text(16, 88, "", { ...STYLE, color: "#fff8e1", backgroundColor: "#00000066", padding: { x: 8, y: 6 } }));
-    this.items = this.pin(scene.add.text(16, 124, "", { ...STYLE, color: "#dce7d4", backgroundColor: "#00000066", padding: { x: 8, y: 6 } }));
-    this.held = this.pin(scene.add.text(16, 160, "Holding Gun", { ...STYLE, color: "#ffe082", backgroundColor: "#00000088", padding: { x: 8, y: 6 } }));
-    this.pin(scene.add.text(16, 196, "WASD move · walk over a weapon to equip it · 1-9 or wheel selects a slot · click uses · C craft", {
+    this.alive = this.pin(scene.add.text(16, 52, "Alive 0", { ...STYLE, color: "#ffe082", backgroundColor: "#00000088", padding: { x: 8, y: 6 } }));
+    this.zone = this.pin(scene.add.text(0, 16, "", { ...STYLE, color: "#eceff1", backgroundColor: "#00000088", padding: { x: 8, y: 6 } }));
+    this.zone.setOrigin(0.5, 0);
+    this.vitals = this.pin(scene.add.text(16, 88, "", { ...STYLE, color: "#c8e6c9", backgroundColor: "#00000066", padding: { x: 8, y: 6 } }));
+    this.resources = this.pin(scene.add.text(16, 124, "", { ...STYLE, color: "#fff8e1", backgroundColor: "#00000066", padding: { x: 8, y: 6 } }));
+    this.items = this.pin(scene.add.text(16, 160, "", { ...STYLE, color: "#dce7d4", backgroundColor: "#00000066", padding: { x: 8, y: 6 } }));
+    this.held = this.pin(scene.add.text(16, 196, "Holding Gun", { ...STYLE, color: "#ffe082", backgroundColor: "#00000088", padding: { x: 8, y: 6 } }));
+    this.help = this.pin(scene.add.text(16, 232, "WASD move · walk over a weapon to equip it · 1-9 or wheel selects a slot · click uses · C craft", {
       ...STYLE,
       fontSize: "13px",
       color: "#dce7d4",
       backgroundColor: "#00000066",
       padding: { x: 8, y: 6 },
     }));
-    this.prompt = this.pin(scene.add.text(16, 234, "", { ...STYLE, color: "#ffe082", backgroundColor: "#00000088", padding: { x: 8, y: 6 } }));
+    this.prompt = this.pin(scene.add.text(16, 270, "", { ...STYLE, color: "#ffe082", backgroundColor: "#00000088", padding: { x: 8, y: 6 } }));
     this.prompt.setVisible(false);
-    this.notice = this.pin(scene.add.text(16, 272, "", { ...STYLE, color: "#ffffff", backgroundColor: "#1b5e2088", padding: { x: 8, y: 6 } }));
+    this.notice = this.pin(scene.add.text(16, 308, "", { ...STYLE, color: "#ffffff", backgroundColor: "#1b5e2088", padding: { x: 8, y: 6 } }));
     this.notice.setAlpha(0);
 
     this.craftButton = scene.add.rectangle(0, 0, 108, 28, 0x2e7d32);
@@ -52,7 +58,22 @@ export class Hud {
       align: "right",
     }));
     this.scoreboard.setOrigin(1, 0);
+    this.playObjects = [
+      this.alive,
+      this.zone,
+      this.vitals,
+      this.resources,
+      this.items,
+      this.held,
+      this.help,
+      this.prompt,
+      this.notice,
+      this.craftButton,
+      this.craftLabel,
+      this.scoreboard,
+    ];
     this.layout(scene.scale.width);
+    this.setPlayVisible(false);
   }
 
   layout(width: number): void {
@@ -60,44 +81,41 @@ export class Hud {
     this.craftButton.setPosition(x, 16);
     this.craftLabel.setPosition(x + 16, 20);
     this.scoreboard.setPosition(width - 16, 56);
+    this.zone.setPosition(width / 2, 16);
   }
 
-  setScoreboard(rows: Array<{ name: string; kills: number; deaths: number }>): void {
+  setPlayVisible(visible: boolean): void {
+    for (const object of this.playObjects) {
+      const node = object as Phaser.GameObjects.GameObject & { setVisible: (value: boolean) => void };
+      node.setVisible(visible);
+    }
+    if (!visible) {
+      this.prompt.setVisible(false);
+    }
+  }
+
+  setScoreboard(rows: Array<{ name: string; kills: number; alive: boolean }>): void {
     const lines = [...rows]
-      .sort((a, b) => b.kills - a.kills || a.deaths - b.deaths || a.name.localeCompare(b.name))
-      .map((row) => `${row.name}  ${row.kills}K ${row.deaths}D`);
+      .sort((a, b) => Number(b.alive) - Number(a.alive) || b.kills - a.kills || a.name.localeCompare(b.name))
+      .map((row) => `${row.alive ? row.name : row.name}  ${row.kills}K${row.alive ? "" : "  out"}`);
     this.scoreboard.setText(lines.join("\n"));
+    this.scoreboard.setColor(rows.some((row) => !row.alive) ? "#eceff1" : "#fff8e1");
   }
 
-  showResult(title: string, onBack: () => void): void {
-    if (this.resultRoot) {
+  setAlive(count: number): void {
+    this.alive.setText(`Alive ${count}`);
+  }
+
+  setZone(shrinking: boolean, nextSec: number): void {
+    if (shrinking) {
+      this.zone.setText("Smoke is closing");
       return;
     }
-    const width = this.scene.scale.width;
-    const height = this.scene.scale.height;
-    const dim = this.scene.add.rectangle(0, 0, width, height, 0x000000, 0.55).setOrigin(0, 0);
-    const card = this.scene.add.rectangle(width / 2, height / 2, 360, 180, 0x12180f, 0.98);
-    card.setStrokeStyle(2, 0x3e5230);
-    const label = this.scene.add.text(width / 2, height / 2 - 36, title, {
-      ...STYLE,
-      fontSize: "22px",
-      color: "#f5f5f5",
-    }).setOrigin(0.5);
-    const button = this.scene.add.rectangle(width / 2, height / 2 + 36, 180, 40, 0x66bb6a);
-    button.setInteractive({ useHandCursor: true });
-    const buttonLabel = this.scene.add.text(width / 2, height / 2 + 36, "Back to menu", {
-      ...STYLE,
-      fontSize: "16px",
-      color: "#102016",
-    }).setOrigin(0.5);
-    button.on("pointerdown", () => onBack());
-    this.resultRoot = this.scene.add.container(0, 0, [dim, card, label, button, buttonLabel]);
-    this.resultRoot.setDepth(2000);
-    this.resultRoot.setScrollFactor(0);
-    for (const child of this.resultRoot.list) {
-      const pinned = child as { setScrollFactor?: (factor: number) => void };
-      pinned.setScrollFactor?.(0);
-    }
+    const minutes = Math.floor(Math.max(0, nextSec) / 60);
+    const seconds = Math.max(0, nextSec) % 60;
+    this.zone.setText(nextSec > 0
+      ? `Smoke closes in ${minutes}:${seconds.toString().padStart(2, "0")}`
+      : "Stay in the circle");
   }
 
   setStatus(text: string): void {
@@ -139,6 +157,9 @@ export class Hud {
   }
 
   hitsCraftButton(x: number, y: number): boolean {
+    if (!this.craftButton.visible) {
+      return false;
+    }
     const camera = this.scene.cameras.main;
     const screenX = this.craftButton.x - camera.scrollX * this.craftButton.scrollFactorX;
     const screenY = this.craftButton.y - camera.scrollY * this.craftButton.scrollFactorY;

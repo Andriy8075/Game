@@ -205,6 +205,7 @@ describe.skipIf(!ready)("account http", () => {
     if (!shooter) {
       throw new Error("missing shooter");
     }
+    room.forceStart();
 
     player.hp = PLAYER_DAMAGE;
     player.armor = 0;
@@ -217,14 +218,12 @@ describe.skipIf(!ready)("account http", () => {
     sendShot(guest, 0);
     await waitTicks(room, 4);
 
-    expect(player.inventory.frag).toBe(0);
-    expect(player.inventory.bandage).toBe(0);
-    expect(player.armor).toBe(0);
-    expect(player.craftedLight).toBe(false);
-    expect(player.held).toBe("gun");
+    expect(player.alive).toBe(false);
+    expect(player.hp).toBe(0);
     expect(player.weaponId).toBe("splinter");
     expect(player.inventory.wood).toBe(4);
     expect(player.inventory.stone).toBe(2);
+    expect(player.inventory.frag).toBe(1);
   });
 
   it("gives kill xp to a signed-in shooter and none when a guest gets the kill", async () => {
@@ -239,6 +238,7 @@ describe.skipIf(!ready)("account http", () => {
     if (!shooter || !victim) {
       throw new Error("missing players");
     }
+    room.forceStart();
 
     victim.hp = PLAYER_DAMAGE;
     victim.armor = 0;
@@ -254,17 +254,29 @@ describe.skipIf(!ready)("account http", () => {
     const afterKill = await waitForXp(registered.user.id, XP_PER_KILL);
     expect(afterKill?.level).toBe(1);
     expect(afterKill?.xp).toBe(XP_PER_KILL);
+    expect(room.state.phase).toBe("ended");
 
-    shooter.hp = PLAYER_DAMAGE;
-    shooter.armor = 0;
-    victim.x = 220;
-    victim.y = 2200;
-    victim.angle = 0;
-    shooter.x = 480;
-    shooter.y = 2200;
-    await waitTicks(room, 18);
-    sendShot(victimClient, 0);
-    await waitTicks(room, 4);
+    const rematch = (await colyseus.createRoom<ServerGameState>(GAME_ROOM_NAME, { manualTime: true })) as unknown as GameRoom;
+    await colyseus.sdk.auth.signOut();
+    const guestShooter = await colyseus.connectTo(rematch, { name: "Guest" });
+    await colyseus.sdk.auth.signInWithEmailAndPassword(email, "secret12");
+    const signedVictim = await colyseus.connectTo(rematch, { name: "Ada" });
+    const guest = rematch.state.players.get(guestShooter.sessionId);
+    const signed = rematch.state.players.get(signedVictim.sessionId);
+    if (!guest || !signed) {
+      throw new Error("missing rematch players");
+    }
+    rematch.forceStart();
+    signed.hp = PLAYER_DAMAGE;
+    signed.armor = 0;
+    guest.x = 220;
+    guest.y = 2200;
+    guest.angle = 0;
+    signed.x = 480;
+    signed.y = 2200;
+    await waitTicks(rematch, 18);
+    sendShot(guestShooter, 0);
+    await waitTicks(rematch, 4);
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     const afterDeath = await findAccountById(registered.user.id);

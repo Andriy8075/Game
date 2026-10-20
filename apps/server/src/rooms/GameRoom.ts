@@ -27,8 +27,16 @@ import {
   GRENADE_SPEED,
   HARVEST,
   HEAVY_ARMOR,
-  KILLS_TO_WIN,
+  COUNTDOWN_MS,
   LIGHT_ARMOR,
+  MATCH_COUNTDOWN,
+  MATCH_ENDED,
+  MATCH_PLAYING,
+  MATCH_WAITING,
+  MIN_PLAYERS_TO_START,
+  SMOKE_KILLER_ID,
+  SMOKE_KILLER_NAME,
+  SMOKE_TICK_MS,
   MAX_CLIENTS,
   MAX_HIRED_BOTS,
   MoveInput,
@@ -70,7 +78,9 @@ import {
   playerMoveSpeed,
   pushForward,
   payCost,
+  isInSmoke,
   pickSpawn,
+  pickUniqueSpawns,
   randomPickupWeapon,
   resolveCollisions,
   resolveMenuWeapon,
@@ -80,6 +90,7 @@ import {
   wallPlacementBlock,
   wallRectForAim,
   wrapAngle,
+  zoneAt,
   type BlastEvent,
   type CraftedId,
   type GatherEvent,
@@ -148,6 +159,10 @@ export class GameRoom extends Room<{ input: MoveInput }> {
   private simTick = 0;
   private simNow = 0;
   private manualTime = false;
+  private countdownEndsAt = 0;
+  private matchStartedAt = 0;
+  private nextSmokeTick = 0;
+  private startedPlayerCount = 0;
   private readonly spawnWeaponId = new Map<string, string>();
   private readonly accountIds = new Map<string, string>();
   private readonly hazardOwners = new Map<string, string>();
@@ -186,19 +201,19 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     }
 
     this.onMessage("craft", (client, payload: unknown) => {
-      if (this.state.matchOver || typeof payload !== "string") {
+      if (!this.canAct(client.sessionId) || typeof payload !== "string") {
         return;
       }
       this.tryCraft(client.sessionId, payload);
     });
     this.onMessage("use", (client, payload: unknown) => {
-      if (this.state.matchOver || typeof payload !== "string") {
+      if (!this.canAct(client.sessionId) || typeof payload !== "string") {
         return;
       }
       this.tryUse(client.sessionId, payload);
     });
     this.onMessage("hold", (client, payload: unknown) => {
-      if (this.state.matchOver || typeof payload !== "string" || !isHeldSlot(payload)) {
+      if (!this.canAct(client.sessionId) || typeof payload !== "string" || !isHeldSlot(payload)) {
         return;
       }
       const player = this.state.players.get(client.sessionId);
@@ -207,13 +222,13 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       }
     });
     this.onMessage("throw", (client, payload: unknown) => {
-      if (this.state.matchOver || typeof payload !== "string") {
+      if (!this.canAct(client.sessionId) || typeof payload !== "string") {
         return;
       }
       this.tryThrow(client.sessionId, payload, this.simNow);
     });
     this.onMessage("place-wall", (client, payload: unknown) => {
-      if (this.state.matchOver) {
+      if (!this.canAct(client.sessionId)) {
         return;
       }
       this.tryPlaceWall(client.sessionId, typeof payload === "string" ? payload : "auto");
@@ -245,6 +260,9 @@ export class GameRoom extends Room<{ input: MoveInput }> {
   }
 
   onJoin(client: Client, options?: JoinOptions): void {
+    if (this.state.phase === MATCH_PLAYING || this.state.phase === MATCH_ENDED) {
+      throw new Error("match_in_progress");
+    }
     const occupied = [...this.state.players.values()].map((player) => ({ x: player.x, y: player.y }));
     const spawn = pickSpawn(occupied);
     const account = this.readAccount(client);
@@ -277,11 +295,16 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       player.maxArmor = LIGHT_ARMOR;
       player.craftedLight = true;
     }
+    player.alive = true;
     this.colorIndex += 1;
     this.state.players.set(client.sessionId, player);
+    this.refreshLobby();
   }
 
   onLeave(client: Client): void {
+    if (this.state.phase === MATCH_PLAYING) {
+      this.eliminate(client.sessionId);
+    }
     this.state.players.delete(client.sessionId);
     for (const id of [...this.state.bots.keys()]) {
       if (this.state.bots.get(id)?.ownerId === client.sessionId) {
@@ -294,21 +317,41 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     this.lastPlaceAt.delete(client.sessionId);
     this.spawnWeaponId.delete(client.sessionId);
     this.accountIds.delete(client.sessionId);
+    if (this.state.phase === MATCH_WAITING || this.state.phase === MATCH_COUNTDOWN) {
+      this.refreshLobby();
+    } else if (this.state.phase === MATCH_PLAYING) {
+      this.checkWinner();
+    }
+  }
+
+  /** Skip the lobby timer. Tests call this after every player has already joined. */
+  forceStart(): void {
+    if (this.state.phase === MATCH_PLAYING || this.state.phase === MATCH_ENDED) {
+      return;
+    }
+    this.startMatch();
   }
 
   private step(ctx: StepContext): void {
-    if (this.state.matchOver) {
+    const now = ctx.tick * ctx.dtMs;
+    this.simNow = now;
+    if (this.state.phase === MATCH_ENDED) {
       return;
     }
-    const now = ctx.tick * ctx.dtMs;
+    if (this.state.phase === MATCH_WAITING || this.state.phase === MATCH_COUNTDOWN) {
+      this.drainInputs();
+      this.tickLobby(now);
+      return;
+    }
+
     this.spawnDuePickups(now);
-    this.simNow = now;
     this.respawnNodes(now);
     this.stepGrenades(ctx.dt, ctx.dtMs);
     this.stepHazards(now, ctx.dtMs);
+    this.stepZone(now, ctx.dtMs);
 
     for (const [sessionId, player] of this.state.players) {
-      if (this.state.matchOver) {
+      if (this.state.phase !== MATCH_PLAYING) {
         break;
       }
       if (player.slowMs > 0) {
@@ -323,6 +366,9 @@ export class GameRoom extends Room<{ input: MoveInput }> {
 
       const channel = this.inputs.get(sessionId);
       const command = channel.next();
+      if (!player.alive) {
+        continue;
+      }
       if (command) {
         applyMovement(player, command, ctx.dt, this.liveMap(), PLAYER_RADIUS, playerMoveSpeed(player));
 
@@ -337,6 +383,166 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       this.collectPickups(player, now);
     }
     this.stepBots(ctx.dt, ctx.dtMs, now);
+  }
+
+  private canAct(sessionId: string): boolean {
+    if (this.state.phase !== MATCH_PLAYING) {
+      return false;
+    }
+    const player = this.state.players.get(sessionId);
+    return Boolean(player?.alive);
+  }
+
+  private drainInputs(): void {
+    for (const [sessionId] of this.state.players) {
+      this.inputs.get(sessionId)?.next();
+    }
+  }
+
+  private refreshLobby(): void {
+    if (this.state.phase === MATCH_PLAYING || this.state.phase === MATCH_ENDED) {
+      return;
+    }
+    const count = this.state.players.size;
+    this.state.aliveCount = count;
+    if (count >= MIN_PLAYERS_TO_START) {
+      if (this.state.phase !== MATCH_COUNTDOWN) {
+        this.state.phase = MATCH_COUNTDOWN;
+        this.countdownEndsAt = this.simNow + COUNTDOWN_MS;
+      }
+      this.state.countdownSec = Math.max(0, Math.ceil((this.countdownEndsAt - this.simNow) / 1000));
+      return;
+    }
+    this.state.phase = MATCH_WAITING;
+    this.state.countdownSec = 0;
+    this.countdownEndsAt = 0;
+  }
+
+  private tickLobby(now: number): void {
+    if (this.state.phase !== MATCH_COUNTDOWN) {
+      return;
+    }
+    const remainingMs = this.countdownEndsAt - now;
+    const sec = Math.max(0, Math.ceil(remainingMs / 1000));
+    if (this.state.countdownSec !== sec) {
+      this.state.countdownSec = sec;
+    }
+    if (remainingMs <= 0) {
+      this.startMatch();
+    }
+  }
+
+  private startMatch(): void {
+    if (this.state.phase === MATCH_PLAYING || this.state.phase === MATCH_ENDED) {
+      return;
+    }
+    void this.lock();
+    this.state.phase = MATCH_PLAYING;
+    this.state.countdownSec = 0;
+    this.matchStartedAt = this.simNow;
+    this.nextSmokeTick = this.simNow;
+    this.startedPlayerCount = this.state.players.size;
+    this.state.rosterSize = this.startedPlayerCount;
+    this.state.aliveCount = this.startedPlayerCount;
+    this.state.winnerId = "";
+    this.state.winnerName = "";
+    this.state.winnerKills = 0;
+    this.state.matchTimeSec = 0;
+    const spawns = pickUniqueSpawns(this.state.players.size);
+    let index = 0;
+    for (const player of this.state.players.values()) {
+      const spawn = spawns[index] ?? pickSpawn(spawns);
+      player.x = spawn.x;
+      player.y = spawn.y;
+      player.alive = true;
+      player.hp = player.maxHp;
+      player.placement = 0;
+      player.killerName = "";
+      index += 1;
+    }
+    this.syncZone(0);
+  }
+
+  private syncZone(elapsedMs: number): void {
+    const snap = zoneAt(elapsedMs);
+    this.state.zoneRadius = snap.radius;
+    this.state.zonePhase = snap.phaseIndex;
+    this.state.zoneShrinking = snap.shrinking;
+    this.state.zoneNextSec = Math.ceil(snap.nextChangeMs / 1000);
+  }
+
+  private stepZone(now: number, _dtMs: number): void {
+    const elapsed = now - this.matchStartedAt;
+    this.syncZone(elapsed);
+    const matchSec = Math.floor(elapsed / 1000);
+    if (this.state.matchTimeSec !== matchSec) {
+      this.state.matchTimeSec = matchSec;
+    }
+    if (now < this.nextSmokeTick) {
+      return;
+    }
+    this.nextSmokeTick = now + SMOKE_TICK_MS;
+    const snap = zoneAt(elapsed);
+    if (snap.damage <= 0) {
+      return;
+    }
+    for (const [sessionId, player] of this.state.players) {
+      if (this.state.phase !== MATCH_PLAYING) {
+        return;
+      }
+      if (!player.alive || !isInSmoke(player.x, player.y, snap.radius)) {
+        continue;
+      }
+      player.hp = Math.max(0, player.hp - snap.damage);
+      if (player.hp <= 0) {
+        this.eliminate(sessionId, SMOKE_KILLER_ID);
+      }
+    }
+    for (const [id, bot] of [...this.state.bots.entries()]) {
+      if (!isInSmoke(bot.x, bot.y, snap.radius)) {
+        continue;
+      }
+      bot.hp = Math.max(0, bot.hp - snap.damage);
+      if (bot.hp <= 0) {
+        this.removeBot(id);
+      }
+    }
+  }
+
+  private countAlive(): number {
+    let count = 0;
+    for (const player of this.state.players.values()) {
+      if (player.alive) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  private checkWinner(): void {
+    if (this.state.phase !== MATCH_PLAYING || this.startedPlayerCount < MIN_PLAYERS_TO_START) {
+      return;
+    }
+    const alive: Array<{ id: string; player: Player }> = [];
+    for (const [id, player] of this.state.players) {
+      if (player.alive) {
+        alive.push({ id, player });
+      }
+    }
+    this.state.aliveCount = alive.length;
+    if (alive.length > 1) {
+      return;
+    }
+    this.state.phase = MATCH_ENDED;
+    this.state.matchTimeSec = Math.max(0, Math.floor((this.simNow - this.matchStartedAt) / 1000));
+    if (alive.length === 1) {
+      const winner = alive[0]!;
+      winner.player.placement = 1;
+      this.state.winnerId = winner.id;
+      this.state.winnerName = winner.player.name;
+      this.state.winnerKills = winner.player.kills;
+      this.broadcast("notice", `${winner.player.name} wins the match`);
+    }
   }
 
   private respawnNodes(now: number): void {
@@ -354,6 +560,9 @@ export class GameRoom extends Room<{ input: MoveInput }> {
   }
 
   private tryGather(sessionId: string, player: Player, now: number): void {
+    if (!player.alive) {
+      return;
+    }
     const last = this.lastGatherAt.get(sessionId) ?? Number.NEGATIVE_INFINITY;
     if (now - last < GATHER_COOLDOWN_MS) {
       return;
@@ -544,6 +753,9 @@ export class GameRoom extends Room<{ input: MoveInput }> {
 
     if (grenade.kind === GRENADE_KIND.flash) {
       for (const player of this.state.players.values()) {
+        if (!player.alive) {
+          continue;
+        }
         if (Math.hypot(player.x - grenade.x, player.y - grenade.y) <= FLASH_RADIUS) {
           player.slowMs = Math.max(player.slowMs, FLASH_SLOW_MS);
         }
@@ -595,8 +807,11 @@ export class GameRoom extends Room<{ input: MoveInput }> {
 
   private damageRadius(x: number, y: number, radius: number, damage: number, falloff: boolean, ownerId?: string): void {
     for (const [sessionId, player] of this.state.players) {
-      if (this.state.matchOver) {
+      if (this.state.phase !== MATCH_PLAYING) {
         return;
+      }
+      if (!player.alive) {
+        continue;
       }
       const distance = Math.hypot(player.x - x, player.y - y);
       const amount = falloff ? blastDamage(distance, radius, damage) : distance <= radius ? damage : 0;
@@ -605,12 +820,12 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       }
       applyDamage(player, amount);
       if (player.hp <= 0) {
-        this.onDowned(sessionId, ownerId);
+        this.eliminate(sessionId, ownerId);
       }
     }
     this.damageWalls(x, y, radius, damage, falloff);
     for (const [id, bot] of [...this.state.bots.entries()]) {
-      if (this.state.matchOver) {
+      if (this.state.phase !== MATCH_PLAYING) {
         return;
       }
       const distance = Math.hypot(bot.x - x, bot.y - y);
@@ -625,7 +840,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
   }
 
   private tryFire(sessionId: string, player: Player, now: number): void {
-    if (this.state.matchOver) {
+    if (this.state.phase !== MATCH_PLAYING || !player.alive) {
       return;
     }
     const weapon = getWeapon(player.weaponId);
@@ -656,7 +871,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       if (target) {
         applyDamage(target, weapon.damage);
         if (target.hp <= 0 && result.id) {
-          this.onDowned(result.id, sessionId);
+          this.eliminate(result.id, sessionId);
         }
       } else {
         this.damageBot(result.id, weapon.damage);
@@ -767,7 +982,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
 
   private tryPlaceWall(sessionId: string, requested: string): void {
     const player = this.state.players.get(sessionId);
-    if (!player || player.hp <= 0 || player.held !== "wall") {
+    if (!player || !player.alive || player.held !== "wall") {
       return;
     }
 
@@ -789,7 +1004,10 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     }
 
     const rect = wallRectForAim(player.x, player.y, player.angle);
-    const bodies = [...this.state.players.values(), ...this.state.bots.values()];
+    const bodies = [
+      ...[...this.state.players.values()].filter((other) => other.alive),
+      ...this.state.bots.values(),
+    ].map((body) => ({ x: body.x, y: body.y }));
     const blocked = wallPlacementBlock(
       rect,
       GAME_MAP,
@@ -906,7 +1124,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
 
   private stepBots(dt: number, dtMs: number, now: number): void {
     for (const [id, bot] of this.state.bots) {
-      if (this.state.matchOver) {
+      if (this.state.phase !== MATCH_PLAYING) {
         return;
       }
       if (bot.slowMs > 0) {
@@ -944,7 +1162,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     let best: Player | undefined;
     let bestDistance = Number.POSITIVE_INFINITY;
     for (const [sessionId, player] of this.state.players) {
-      if (sessionId === bot.ownerId) {
+      if (sessionId === bot.ownerId || !player.alive) {
         continue;
       }
       const distance = Math.hypot(player.x - bot.x, player.y - bot.y);
@@ -957,7 +1175,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
   }
 
   private botFire(id: string, bot: Bot, now: number): void {
-    if (this.state.matchOver) {
+    if (this.state.phase !== MATCH_PLAYING) {
       return;
     }
     const last = this.lastFireAt.get(id) ?? Number.NEGATIVE_INFINITY;
@@ -969,7 +1187,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     const world = this.liveMap();
     const origin = muzzleOrigin(bot.x, bot.y, bot.angle, BOT_RADIUS + 6);
     const targets = [...this.state.players.entries()]
-      .filter(([sessionId]) => sessionId !== bot.ownerId)
+      .filter(([sessionId, player]) => sessionId !== bot.ownerId && player.alive)
       .map(([sessionId, player]) => ({ id: sessionId, x: player.x, y: player.y }));
     const result = castHitscan(origin.x, origin.y, bot.angle, targets, world, BOT_RANGE, id);
     if (result.kind === "obstacle" && result.id) {
@@ -980,7 +1198,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
       if (target) {
         applyDamage(target, BOT_DAMAGE);
         if (target.hp <= 0) {
-          this.onDowned(result.id, bot.ownerId);
+          this.eliminate(result.id, bot.ownerId);
         }
       }
     }
@@ -1007,7 +1225,7 @@ export class GameRoom extends Room<{ input: MoveInput }> {
   }
 
   private targetsSeenBy(sessionId: string): Array<{ id: string; x: number; y: number; radius?: number }> {
-    const players = [...this.state.players.entries()].filter(([id]) => id !== sessionId);
+    const players = [...this.state.players.entries()].filter(([id, player]) => id !== sessionId && player.alive);
     const bodies = players.map(([id, other]) => ({ id, other }));
     // Test steps skip the wall clock, so the lag-comp history still has old positions.
     let seenPlayers: Array<{ id: string; x: number; y: number }>;
@@ -1027,62 +1245,50 @@ export class GameRoom extends Room<{ input: MoveInput }> {
     return [...seenPlayers, ...this.botTargets()];
   }
 
-  private onDowned(victimId: string, killerId: string | undefined): void {
-    if (this.state.matchOver) {
+  private eliminate(victimId: string, killerId?: string): void {
+    if (this.state.phase !== MATCH_PLAYING) {
       return;
     }
     const victim = this.state.players.get(victimId);
-    if (!victim) {
+    if (!victim || !victim.alive) {
       return;
     }
-    victim.deaths += 1;
-    const creditedKiller = killerId && killerId !== victimId ? killerId : undefined;
-    const killer = creditedKiller ? this.state.players.get(creditedKiller) : undefined;
-    if (killer && creditedKiller) {
-      killer.kills += 1;
-      this.broadcast("notice", `${killer.name} downed ${victim.name}`);
-      const accountId = this.accountIds.get(creditedKiller);
-      if (accountId) {
-        void addKillXp(accountId).catch((error: unknown) => {
-          const message = error instanceof Error ? error.message : String(error);
-          console.warn(`Could not save kill XP: ${message}`);
-        });
-      }
-      if (killer.kills >= KILLS_TO_WIN) {
-        this.state.matchOver = true;
-        this.state.winnerName = killer.name;
-        this.broadcast("notice", `${killer.name} wins the match`);
+    victim.alive = false;
+    victim.hp = 0;
+    victim.placement = this.countAlive() + 1;
+    victim.slowMs = 0;
+    victim.wardMs = 0;
+    victim.hasteMs = 0;
+    for (const id of [...this.state.bots.keys()]) {
+      if (this.state.bots.get(id)?.ownerId === victimId) {
+        this.removeBot(id);
       }
     }
-    this.respawn(victimId, victim);
-  }
 
-  private respawn(sessionId: string, player: Player): void {
-    const occupied = [...this.state.players.values()]
-      .filter((other) => other !== player)
-      .map((other) => ({ x: other.x, y: other.y }));
-    const spawn = pickSpawn(occupied);
-    player.x = spawn.x;
-    player.y = spawn.y;
-    player.hp = player.maxHp;
-    player.slowMs = 0;
-    player.wardMs = 0;
-    player.hasteMs = 0;
-    player.inventory.frag = 0;
-    player.inventory.flash = 0;
-    player.inventory.incendiary = 0;
-    player.inventory.bandage = 0;
-    player.inventory.bastion = 0;
-    player.inventory.gale = 0;
-    player.inventory.ramspike = 0;
-    player.armor = 0;
-    player.maxArmor = 0;
-    player.craftedLight = false;
-    player.craftedHeavy = false;
-    if (player.held !== "gun" && player.held !== "arm") {
-      player.held = "gun";
+    if (killerId === SMOKE_KILLER_ID) {
+      victim.killerName = SMOKE_KILLER_NAME;
+      this.broadcast("notice", `${victim.name} was claimed by the smoke`);
+    } else {
+      const creditedKiller = killerId && killerId !== victimId ? killerId : undefined;
+      const killer = creditedKiller ? this.state.players.get(creditedKiller) : undefined;
+      if (killer && creditedKiller) {
+        killer.kills += 1;
+        victim.killerName = killer.name;
+        this.broadcast("notice", `${killer.name} downed ${victim.name}`);
+        const accountId = this.accountIds.get(creditedKiller);
+        if (accountId) {
+          void addKillXp(accountId).catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : String(error);
+            console.warn(`Could not save kill XP: ${message}`);
+          });
+        }
+      } else {
+        victim.killerName = "";
+      }
     }
-    this.equipWeapon(player, this.spawnWeaponId.get(sessionId) ?? STARTER_WEAPON_ID);
+
+    this.state.aliveCount = this.countAlive();
+    this.checkWinner();
   }
 
   private equipWeapon(player: Player, weaponId: string): void {

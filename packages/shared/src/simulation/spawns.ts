@@ -25,3 +25,11 @@ export function pickSpawn(occupied: SpawnPoint[] = [], radius: number = PLAYER_R
 
   return best;
 }
+
+export function pickUniqueSpawns(count: number, radius: number = PLAYER_RADIUS * 4): SpawnPoint[] {
+  const claimed: SpawnPoint[] = [];
+  for (let index = 0; index < count; index += 1) {
+    claimed.push(pickSpawn(claimed, radius));
+  }
+  return claimed;
+}

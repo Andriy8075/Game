@@ -17,7 +17,6 @@ import {
   GAME_ROOM_NAME,
   HARVEST,
   HEAVY_ARMOR,
-  LIGHT_ARMOR,
   MAX_HIRED_BOTS,
   MoveInput,
   PLAYER_DAMAGE,
@@ -26,7 +25,6 @@ import {
   PLAYER_SPEED,
   RAMSPIKE_DISTANCE,
   SLOW_SPEED_FACTOR,
-  STARTER_WEAPON_ID,
   THROW_COOLDOWN_MS,
   TICK_RATE,
   WALL_HP,
@@ -35,7 +33,7 @@ import {
 } from "@io-game/shared";
 import { createGameServer } from "../src/app.config";
 import { GameRoom } from "../src/rooms/GameRoom";
-import { waitTicks } from "./clock";
+import { connectPlaying, waitTicks } from "./clock";
 
 const GATHER_GAP_TICKS = 16;
 
@@ -65,7 +63,7 @@ describe("gather, craft, and combat", () => {
 
   it("switches between the gun, grenades, bandage, and arm, and ignores armor", async () => {
     const room = await openRoom();
-    const client = await colyseus.connectTo(room);
+    const [client] = await connectPlaying(colyseus, room);
     const player = requirePlayer(room, client.sessionId);
 
     for (const slot of ["frag", "flash", "incendiary", "bandage", "bastion", "gale", "ramspike", "wall", "arm", "gun"] as const) {
@@ -83,7 +81,7 @@ describe("gather, craft, and combat", () => {
 
   it("puts wood, stone, iron, and gold into the inventory only while the arm is out", async () => {
     const room = await openRoom();
-    const client = await colyseus.connectTo(room);
+    const [client] = await connectPlaying(colyseus, room);
     const player = requirePlayer(room, client.sessionId);
     const nodes = [node("tree-1"), node("stone-1"), node("iron-1"), node("gold-1")];
 
@@ -108,7 +106,7 @@ describe("gather, craft, and combat", () => {
 
   it("waits out the gather cooldown and stops when the node is empty", async () => {
     const room = await openRoom();
-    const client = await colyseus.connectTo(room);
+    const [client] = await connectPlaying(colyseus, room);
     const player = requirePlayer(room, client.sessionId);
     const gold = node("gold-1");
 
@@ -137,7 +135,7 @@ describe("gather, craft, and combat", () => {
 
   it("grows a depleted gold vein back", async () => {
     const room = await openRoom();
-    const client = await colyseus.connectTo(room);
+    const [client] = await connectPlaying(colyseus, room);
     const player = requirePlayer(room, client.sessionId);
     const gold = node("gold-1");
 
@@ -153,8 +151,7 @@ describe("gather, craft, and combat", () => {
 
   it("does not shoot while the arm or a grenade is selected", async () => {
     const room = await openRoom();
-    const shooterClient = await colyseus.connectTo(room);
-    const targetClient = await colyseus.connectTo(room);
+    const [shooterClient, targetClient] = await connectPlaying(colyseus, room, {}, {});
     const shooter = requirePlayer(room, shooterClient.sessionId);
     const target = requirePlayer(room, targetClient.sessionId);
     placeDuel(shooter, target);
@@ -180,7 +177,7 @@ describe("gather, craft, and combat", () => {
 
   it("crafts grenades and bandages only when every resource is paid", async () => {
     const room = await openRoom();
-    const client = await colyseus.connectTo(room);
+    const [client] = await connectPlaying(colyseus, room);
     const player = requirePlayer(room, client.sessionId);
 
     player.inventory.stone = 2;
@@ -212,7 +209,7 @@ describe("gather, craft, and combat", () => {
 
   it("heals with a bandage, caps at full health, and keeps the bandage when it cannot be used", async () => {
     const room = await openRoom();
-    const client = await colyseus.connectTo(room);
+    const [client] = await connectPlaying(colyseus, room);
     const player = requirePlayer(room, client.sessionId);
 
     player.hp = PLAYER_MAX_HP;
@@ -243,7 +240,7 @@ describe("gather, craft, and combat", () => {
 
   it("does not equip armor by using an inventory stack", async () => {
     const room = await openRoom();
-    const client = await colyseus.connectTo(room);
+    const [client] = await connectPlaying(colyseus, room);
     const player = requirePlayer(room, client.sessionId);
 
     player.inventory.lightArmor = 1;
@@ -256,8 +253,7 @@ describe("gather, craft, and combat", () => {
 
   it("throws a frag only from the hand and deals full damage at the blast center", async () => {
     const room = await openRoom();
-    const throwerClient = await colyseus.connectTo(room);
-    const targetClient = await colyseus.connectTo(room);
+    const [throwerClient, targetClient] = await connectPlaying(colyseus, room, {}, {});
     const thrower = requirePlayer(room, throwerClient.sessionId);
     const target = requirePlayer(room, targetClient.sessionId);
 
@@ -296,9 +292,7 @@ describe("gather, craft, and combat", () => {
 
   it("slows players inside a flash blast and leaves others alone", async () => {
     const room = await openRoom();
-    const throwerClient = await colyseus.connectTo(room);
-    const caughtClient = await colyseus.connectTo(room);
-    const safeClient = await colyseus.connectTo(room);
+    const [throwerClient, caughtClient, safeClient] = await connectPlaying(colyseus, room, {}, {}, {});
     const thrower = requirePlayer(room, throwerClient.sessionId);
     const caught = requirePlayer(room, caughtClient.sessionId);
     const safe = requirePlayer(room, safeClient.sessionId);
@@ -341,8 +335,7 @@ describe("gather, craft, and combat", () => {
 
   it("burns players standing in an incendiary patch", async () => {
     const room = await openRoom();
-    const throwerClient = await colyseus.connectTo(room);
-    const targetClient = await colyseus.connectTo(room);
+    const [throwerClient, targetClient] = await connectPlaying(colyseus, room, {}, {});
     const thrower = requirePlayer(room, throwerClient.sessionId);
     const target = requirePlayer(room, targetClient.sessionId);
 
@@ -366,7 +359,7 @@ describe("gather, craft, and combat", () => {
 
   it("refuses a second throw until the cooldown has passed", async () => {
     const room = await openRoom();
-    const client = await colyseus.connectTo(room);
+    const [client] = await connectPlaying(colyseus, room);
     const player = requirePlayer(room, client.sessionId);
     player.x = 200;
     player.y = 2200;
@@ -391,8 +384,7 @@ describe("gather, craft, and combat", () => {
 
   it("farms stone and iron, crafts a frag, and damages a player with it", async () => {
     const room = await openRoom();
-    const minerClient = await colyseus.connectTo(room);
-    const targetClient = await colyseus.connectTo(room);
+    const [minerClient, targetClient] = await connectPlaying(colyseus, room, {}, {});
     const miner = requirePlayer(room, minerClient.sessionId);
     const target = requirePlayer(room, targetClient.sessionId);
 
@@ -431,8 +423,7 @@ describe("gather, craft, and combat", () => {
 
   it("farms wood, crafts a bandage, and heals a gunshot", async () => {
     const room = await openRoom();
-    const minerClient = await colyseus.connectTo(room);
-    const shooterClient = await colyseus.connectTo(room);
+    const [minerClient, shooterClient] = await connectPlaying(colyseus, room, {}, {});
     const miner = requirePlayer(room, minerClient.sessionId);
     const shooter = requirePlayer(room, shooterClient.sessionId);
 
@@ -458,10 +449,9 @@ describe("gather, craft, and combat", () => {
     expect(miner.inventory.bandage).toBe(0);
   });
 
-  it("drops crafted gear on death and keeps the join gun", async () => {
+  it("eliminates a player without respawning them", async () => {
     const room = await openRoom();
-    const shooterClient = await colyseus.connectTo(room);
-    const targetClient = await colyseus.connectTo(room);
+    const [shooterClient, targetClient] = await connectPlaying(colyseus, room, {}, {});
     const shooter = requirePlayer(room, shooterClient.sessionId);
     const target = requirePlayer(room, targetClient.sessionId);
 
@@ -480,36 +470,37 @@ describe("gather, craft, and combat", () => {
     target.held = "frag";
     target.hp = PLAYER_DAMAGE;
     target.armor = 0;
+    const deathX = 480;
+    const deathY = 2200;
     placeDuel(shooter, target);
     await waitTicks(room, 18);
     sendShot(shooterClient, 0);
     await waitTicks(room, 4);
 
-    expect(target.hp).toBe(PLAYER_MAX_HP);
-    expect(target.inventory.frag).toBe(0);
-    expect(target.inventory.bandage).toBe(0);
-    expect(target.armor).toBe(0);
-    expect(target.maxArmor).toBe(0);
-    expect(target.craftedHeavy).toBe(false);
-    expect(target.held).toBe("gun");
-    expect(target.weaponId).toBe(STARTER_WEAPON_ID);
+    expect(target.alive).toBe(false);
+    expect(target.hp).toBe(0);
+    expect(target.x).toBe(deathX);
+    expect(target.y).toBe(deathY);
+    expect(target.weaponId).toBe("forge");
     expect(target.inventory.wood).toBe(4);
     expect(target.inventory.stone).toBe(2);
     expect(shooter.kills).toBe(1);
-    expect(target.deaths).toBe(1);
+    expect(room.state.phase).toBe("ended");
+    expect(room.state.winnerId).toBe(shooterClient.sessionId);
 
     target.inventory.iron = 4;
     target.inventory.stone = 3;
     sendMessage(targetClient, "craft", "lightArmor");
     await waitTicks(room, 2);
-    expect(target.armor).toBe(LIGHT_ARMOR);
-    expect(target.craftedLight).toBe(true);
+    expect(target.armor).toBe(0);
+    expect(target.craftedLight).toBe(false);
+    expect(target.alive).toBe(false);
   });
 
 
   it("places a barricade in front of the aim and spends wood, stone, or iron", async () => {
     const room = await openRoom();
-    const client = await colyseus.connectTo(room);
+    const [client] = await connectPlaying(colyseus, room);
     const player = requirePlayer(room, client.sessionId);
     player.x = 220;
     player.y = 2200;
@@ -554,7 +545,7 @@ describe("gather, craft, and combat", () => {
 
   it("places a stone barricade from the selected slot when wood is short", async () => {
     const room = await openRoom();
-    const client = await colyseus.connectTo(room);
+    const [client] = await connectPlaying(colyseus, room);
     const player = requirePlayer(room, client.sessionId);
     player.x = 220;
     player.y = 2200;
@@ -575,8 +566,7 @@ describe("gather, craft, and combat", () => {
 
   it("does not spend resources when the wall would cover another player", async () => {
     const room = await openRoom();
-    const client = await colyseus.connectTo(room);
-    const other = await colyseus.connectTo(room);
+    const [client, other] = await connectPlaying(colyseus, room, {}, {});
     const player = requirePlayer(room, client.sessionId);
     const target = requirePlayer(room, other.sessionId);
     player.x = 220;
@@ -596,8 +586,7 @@ describe("gather, craft, and combat", () => {
 
   it("blocks movement and stops bullets until a few shots break it", async () => {
     const room = await openRoom();
-    const shooterClient = await colyseus.connectTo(room);
-    const targetClient = await colyseus.connectTo(room);
+    const [shooterClient, targetClient] = await connectPlaying(colyseus, room, {}, {});
     const shooter = requirePlayer(room, shooterClient.sessionId);
     const target = requirePlayer(room, targetClient.sessionId);
     shooter.x = 220;
@@ -643,7 +632,7 @@ describe("gather, craft, and combat", () => {
 
   it("caps each player at a handful of walls", async () => {
     const room = await openRoom();
-    const client = await colyseus.connectTo(room);
+    const [client] = await connectPlaying(colyseus, room);
     const player = requirePlayer(room, client.sessionId);
     player.inventory.wood = 30;
     player.angle = 0;
@@ -669,8 +658,7 @@ describe("gather, craft, and combat", () => {
 
   it("hires a weak bot that walks to the nearest other player and shoots them", async () => {
     const room = await openRoom();
-    const ownerClient = await colyseus.connectTo(room);
-    const enemyClient = await colyseus.connectTo(room);
+    const [ownerClient, enemyClient] = await connectPlaying(colyseus, room, {}, {});
     const owner = requirePlayer(room, ownerClient.sessionId);
     const enemy = requirePlayer(room, enemyClient.sessionId);
     owner.x = 220;
@@ -711,8 +699,7 @@ describe("gather, craft, and combat", () => {
 
   it("deals one weak hit when the enemy is already in range", async () => {
     const room = await openRoom();
-    const ownerClient = await colyseus.connectTo(room);
-    const enemyClient = await colyseus.connectTo(room);
+    const [ownerClient, enemyClient] = await connectPlaying(colyseus, room, {}, {});
     const owner = requirePlayer(room, ownerClient.sessionId);
     const enemy = requirePlayer(room, enemyClient.sessionId);
     owner.x = 220;
@@ -730,8 +717,7 @@ describe("gather, craft, and combat", () => {
 
   it("walks a hired bot around the yard fence to reach a player", async () => {
     const room = await openRoom();
-    const ownerClient = await colyseus.connectTo(room);
-    const enemyClient = await colyseus.connectTo(room);
+    const [ownerClient, enemyClient] = await connectPlaying(colyseus, room, {}, {});
     const owner = requirePlayer(room, ownerClient.sessionId);
     const enemy = requirePlayer(room, enemyClient.sessionId);
     owner.x = 200;
@@ -754,8 +740,7 @@ describe("gather, craft, and combat", () => {
 
   it("lets a player destroy a hired bot and stops at the hire cap", async () => {
     const room = await openRoom();
-    const ownerClient = await colyseus.connectTo(room);
-    const enemyClient = await colyseus.connectTo(room);
+    const [ownerClient, enemyClient] = await connectPlaying(colyseus, room, {}, {});
     const owner = requirePlayer(room, ownerClient.sessionId);
     const enemy = requirePlayer(room, enemyClient.sessionId);
     owner.x = 220;
@@ -804,8 +789,7 @@ describe("gather, craft, and combat", () => {
 
   it("crafts Bastion Potion and Gale Potion, then spends them on protection and speed", async () => {
     const room = await openRoom();
-    const client = await colyseus.connectTo(room);
-    const shooterClient = await colyseus.connectTo(room);
+    const [client, shooterClient] = await connectPlaying(colyseus, room, {}, {});
     const player = requirePlayer(room, client.sessionId);
     const shooter = requirePlayer(room, shooterClient.sessionId);
 
@@ -855,8 +839,7 @@ describe("gather, craft, and combat", () => {
 
   it("crafts one Ramspike, shoves the player forward, and drops the new gear on death", async () => {
     const room = await openRoom();
-    const client = await colyseus.connectTo(room);
-    const shooterClient = await colyseus.connectTo(room);
+    const [client, shooterClient] = await connectPlaying(colyseus, room, {}, {});
     const player = requirePlayer(room, client.sessionId);
     const shooter = requirePlayer(room, shooterClient.sessionId);
 
@@ -897,14 +880,14 @@ describe("gather, craft, and combat", () => {
     sendShot(shooterClient, 0);
     await waitTicks(room, 4);
 
-    expect(player.hp).toBe(PLAYER_MAX_HP);
-    expect(player.inventory.bastion).toBe(0);
-    expect(player.inventory.gale).toBe(0);
-    expect(player.inventory.ramspike).toBe(0);
+    expect(player.alive).toBe(false);
+    expect(player.hp).toBe(0);
+    expect(player.inventory.bastion).toBe(2);
+    expect(player.inventory.gale).toBe(2);
+    expect(player.inventory.ramspike).toBe(2);
     expect(player.wardMs).toBe(0);
     expect(player.hasteMs).toBe(0);
-    expect(player.held).toBe("gun");
-
+    expect(room.state.phase).toBe("ended");
   });
 });
 

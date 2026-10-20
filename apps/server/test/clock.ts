@@ -1,3 +1,4 @@
+import type { ColyseusTestServer } from "@colyseus/testing";
 import type { GameRoom } from "../src/rooms/GameRoom";
 
 /** Let a websocket message land before the simulation consumes it. */
@@ -12,4 +13,19 @@ export async function waitTicks(room: GameRoom, ticks: number): Promise<void> {
   if (ticks > 0) {
     room.advance(ticks);
   }
+}
+
+/** Join every client first, then skip the lobby so gameplay tests can start immediately. */
+export async function connectPlaying(
+  colyseus: ColyseusTestServer,
+  room: GameRoom,
+  ...allOptions: Array<object | undefined>
+) {
+  const options = allOptions.length > 0 ? allOptions : [undefined];
+  const clients = [];
+  for (const opts of options) {
+    clients.push(await colyseus.connectTo(room, opts));
+  }
+  room.forceStart();
+  return clients;
 }

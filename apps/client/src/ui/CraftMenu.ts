@@ -144,6 +144,11 @@ export class CraftMenu {
     this.root.setVisible(this.open);
   }
 
+  close(): void {
+    this.open = false;
+    this.root.setVisible(false);
+  }
+
   isOpen(): boolean {
     return this.open;
   }

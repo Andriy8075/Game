@@ -39,7 +39,9 @@ export const Player = schema({
   craftedLight: t.boolean().default(false),
   craftedHeavy: t.boolean().default(false),
   kills: t.number().default(0),
-  deaths: t.number().default(0),
+  alive: t.boolean().default(true),
+  placement: t.number().default(0),
+  killerName: t.string().default(""),
   inventory: t.ref(Inventory),
 }, "Player");
 
@@ -116,8 +118,18 @@ export const GameState = schema({
   hazards: t.map(HazardZone),
   walls: t.map(PlacedWall),
   bots: t.map(Bot),
-  matchOver: t.boolean().default(false),
+  phase: t.string().default("waiting"),
+  countdownSec: t.number().default(0),
+  aliveCount: t.number().default(0),
+  rosterSize: t.number().default(0),
+  winnerId: t.string().default(""),
   winnerName: t.string().default(""),
+  winnerKills: t.number().default(0),
+  matchTimeSec: t.number().default(0),
+  zoneRadius: t.number().default(2000),
+  zonePhase: t.number().default(0),
+  zoneShrinking: t.boolean().default(false),
+  zoneNextSec: t.number().default(0),
 }, "GameState");
 
 export type GameState = SchemaType<typeof GameState>;

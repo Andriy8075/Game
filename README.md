@@ -1,6 +1,6 @@
 # Authoritative .io Shooter
 
-A 2D multiplayer shooter with a Phaser client and a Colyseus authoritative Node.js server.
+A 2D battle royale shooter with a Phaser client and a Colyseus authoritative Node.js server. Players join a waiting room; the match starts 20 seconds after at least two people are ready. Last one standing wins.
 
 ## Stack
 
@@ -16,7 +16,7 @@ npm install
 npm run dev
 ```
 
-Then open two browser tabs at [http://localhost:5173](http://localhost:5173). The Colyseus server listens on `http://localhost:2567`.
+Then open two browser tabs at [http://localhost:5173](http://localhost:5173) and press Play in each. You land in a waiting room; the battle starts 20 seconds after the second player joins. The Colyseus server listens on `http://localhost:2567`.
 
 ## Controls
 
@@ -33,7 +33,9 @@ Trees yield wood, rocks yield stone, and the copper and yellow veins yield iron 
 
 The barricade preview is only drawn for the player who has that slot selected. It does not stop bullets or movement. The placed barricade is shared with everyone else: it blocks movement and bullets, has 40 hit points, and breaks after a few shots, so a player shut inside can shoot their way out. Each player can keep 8 walls up.
 
-The local player stays centered. The map, obstacles, and other players scroll around them. The server owns positions, collisions, hit detection, inventories, and crafting. Obstacles block both movement and bullets.
+Smoke closes in from the map edges and corners toward the center. Standing in the smoke damages you, so players have to fight their way inward. There are no respawns. When you are eliminated, the camera freezes and an Exit button returns you to the menu. The last living player is the winner.
+
+The local player stays centered until they die. The map, obstacles, and other players scroll around them. The server owns positions, collisions, hit detection, inventories, crafting, the match timer, and the smoke zone. Obstacles block both movement and bullets.
 
 ## Scripts
 

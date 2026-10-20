@@ -6,6 +6,8 @@ import {
   HARVEST,
   HELD_SLOTS,
   INTERP_DELAY_MS,
+  MATCH_ENDED,
+  MATCH_PLAYING,
   MoveInput,
   PLAYER_RADIUS,
   STARTER_WEAPON_ID,
@@ -17,6 +19,7 @@ import {
   getWeapon,
   isGrenadeSlot,
   isHeldSlot,
+  isInSmoke,
   mapWithWalls,
   nearestHarvestable,
   wallCostLabel,
@@ -31,10 +34,13 @@ import {
 import { ActorsView } from "../entities/ActorsView";
 import { PickupView } from "../entities/PickupView";
 import { PlayerView } from "../entities/PlayerView";
+import { SmokeView } from "../entities/SmokeView";
 import { drawWorld } from "../entities/WorldView";
 import { connectToGame, type GameRoom } from "../network/GameClient";
 import { CraftMenu, type CraftAction } from "../ui/CraftMenu";
 import { Hud } from "../ui/Hud";
+import { LobbyOverlay } from "../ui/LobbyOverlay";
+import { ResultPanel } from "../ui/ResultPanel";
 import { WeaponMenu } from "../ui/WeaponMenu";
 
 type SyncedInventory = StackCounts;
@@ -58,7 +64,9 @@ type SyncedPlayer = {
   craftedLight: boolean;
   craftedHeavy: boolean;
   kills: number;
-  deaths: number;
+  alive: boolean;
+  placement: number;
+  killerName: string;
   inventory: SyncedInventory;
 };
 
@@ -116,15 +124,22 @@ export class GameScene extends Phaser.Scene {
   private hud!: Hud;
   private weaponMenu!: WeaponMenu;
   private craftMenu!: CraftMenu;
+  private lobby!: LobbyOverlay;
+  private results!: ResultPanel;
+  private smoke!: SmokeView;
   private slotKeys: Phaser.Input.Keyboard.Key[] = [];
   private actors!: ActorsView;
   private held: HeldSlot = "gun";
   private playerName = DEFAULT_PLAYER_NAME;
   private weaponId: string = STARTER_WEAPON_ID;
-  private matchEnded = false;
   private pendingFire = false;
   private holdingFire = false;
   private pendingGather = false;
+  private cameraFrozen = false;
+  private localAlive = true;
+  private playHudShown = false;
+  private leaving = false;
+  private smokeWarning?: Phaser.GameObjects.Rectangle;
   private readonly views = new Map<string, PlayerView>();
   private readonly botViews = new Map<string, PlayerView>();
   private readonly pickups = new Map<string, PickupView>();
@@ -139,9 +154,19 @@ export class GameScene extends Phaser.Scene {
     this.weaponId = typeof chosenWeapon === "string" ? chosenWeapon : STARTER_WEAPON_ID;
     drawWorld(this);
     this.actors = new ActorsView(this);
+    this.smoke = new SmokeView(this);
     this.hud = new Hud(this);
     this.weaponMenu = new WeaponMenu(this, this.weaponId);
     this.craftMenu = new CraftMenu(this, (action) => this.sendAction(action));
+    this.lobby = new LobbyOverlay(this);
+    this.results = new ResultPanel(this);
+    this.lobby.setExitHandler(() => this.leaveMatch());
+    this.results.setExitHandler(() => this.leaveMatch());
+    this.smokeWarning = this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0x546e7a, 0.16);
+    this.smokeWarning.setOrigin(0, 0);
+    this.smokeWarning.setScrollFactor(0);
+    this.smokeWarning.setDepth(900);
+    this.smokeWarning.setVisible(false);
     const keyboard = this.input.keyboard!;
     this.keys = keyboard.addKeys({
       W: Phaser.Input.Keyboard.KeyCodes.W,
@@ -181,11 +206,16 @@ export class GameScene extends Phaser.Scene {
       this.hud.layout(size.width);
       this.weaponMenu.layout(size.width, size.height);
       this.craftMenu.layout(size.width, size.height);
+      this.lobby.layout(size.width, size.height);
+      this.smokeWarning?.setSize(size.width, size.height);
     });
 
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       this.holdingFire = false;
-      if (this.matchEnded) {
+      if (this.lobby.hitsExit(pointer.x, pointer.y) || this.results.hitsExit(pointer.x, pointer.y)) {
+        return;
+      }
+      if (!this.canPlay()) {
         return;
       }
       if (this.hud.hitsCraftButton(pointer.x, pointer.y)) {
@@ -216,7 +246,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.input.on("wheel", (pointer: Phaser.Input.Pointer, _over: Phaser.GameObjects.GameObject[], _deltaX: number, deltaY: number) => {
-      if (this.matchEnded || deltaY === 0) {
+      if (!this.canPlay() || deltaY === 0) {
         return;
       }
       if (this.craftMenu.handleWheel(pointer.x, pointer.y, deltaY)) {
@@ -234,25 +264,46 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    const match = this.room.state as { matchOver?: boolean; winnerName?: string };
-    if (match.matchOver) {
-      this.matchEnded = true;
-      const winner = match.winnerName && match.winnerName.length > 0 ? match.winnerName : "Someone";
-      this.hud.showResult(`${winner} wins`, () => this.leaveMatch());
-    }
+    const state = this.room.state as {
+      phase: string;
+      countdownSec: number;
+      aliveCount: number;
+      rosterSize: number;
+      winnerId: string;
+      winnerName: string;
+      winnerKills: number;
+      matchTimeSec: number;
+      zoneRadius: number;
+      zoneShrinking: boolean;
+      zoneNextSec: number;
+      players: Map<string, SyncedPlayer>;
+      nodes: Map<string, { remaining: number }>;
+      grenades: Map<string, { x: number; y: number; kind: number }>;
+      hazards: Map<string, { x: number; y: number; radius: number; kind: number }>;
+      walls: Map<string, { x: number; y: number; width: number; height: number; hp: number; maxHp: number; material: string }>;
+      bots: Map<string, SyncedBot>;
+    };
 
-    if (!this.matchEnded) {
+    this.lobby.sync(state.phase, state.countdownSec, [...state.players.values()].map((player) => ({
+      name: sanitizePlayerName(player.name),
+      color: player.color,
+    })));
+    this.setPlayUi(state.phase === MATCH_PLAYING && this.localAlive);
+    this.smoke.sync(state.zoneRadius, time);
+
+    const playing = this.canPlay();
+    if (playing) {
       this.readHotkeys();
     }
 
     const aim = this.readAim();
-    const move = this.readMove();
+    const move = playing ? this.readMove() : { x: 0 as const, y: 0 as const };
     const pointer = this.input.activePointer;
     if (!pointer.leftButtonDown()) {
       this.holdingFire = false;
     }
     const overCraftUi = this.craftMenu.contains(pointer.x, pointer.y) || this.hud.hitsCraftButton(pointer.x, pointer.y);
-    const gather = !this.matchEnded && this.held === "arm" && (this.pendingGather || (pointer.leftButtonDown() && !overCraftUi));
+    const gather = playing && this.held === "arm" && (this.pendingGather || (pointer.leftButtonDown() && !overCraftUi));
     const steps = this.predict.tick(time);
 
     for (let i = 0; i < steps; i += 1) {
@@ -263,29 +314,23 @@ export class GameScene extends Phaser.Scene {
         fire: boolean;
         gather: boolean;
       };
-      data.moveX = this.matchEnded ? 0 : move.x;
-      data.moveY = this.matchEnded ? 0 : move.y;
+      data.moveX = playing ? move.x : 0;
+      data.moveY = playing ? move.y : 0;
       data.aimAngle = aim;
-      data.fire = !this.matchEnded && this.held === "gun" && (this.holdingFire || this.pendingFire);
-      data.gather = this.matchEnded ? false : gather;
+      data.fire = playing && this.held === "gun" && (this.holdingFire || this.pendingFire);
+      data.gather = playing ? gather : false;
       this.inputHandle.send();
       this.pendingFire = false;
       this.pendingGather = false;
     }
 
-    const state = this.room.state as {
-      players: Map<string, SyncedPlayer>;
-      nodes: Map<string, { remaining: number }>;
-      grenades: Map<string, { x: number; y: number; kind: number }>;
-      hazards: Map<string, { x: number; y: number; radius: number; kind: number }>;
-      walls: Map<string, { x: number; y: number; width: number; height: number; hp: number; maxHp: number; material: string }>;
-      bots: Map<string, SyncedBot>;
-    };
     this.hud.setScoreboard([...state.players.values()].map((player) => ({
       name: sanitizePlayerName(player.name),
       kills: player.kills ?? 0,
-      deaths: player.deaths ?? 0,
+      alive: player.alive !== false,
     })));
+    this.hud.setAlive(state.aliveCount);
+    this.hud.setZone(state.zoneShrinking, state.zoneNextSec);
     this.actors.syncNodes(state.nodes);
     this.actors.syncGrenades(state.grenades);
     this.actors.syncHazards(state.hazards);
@@ -301,7 +346,9 @@ export class GameScene extends Phaser.Scene {
       const x = this.readField(player, "x");
       const y = this.readField(player, "y");
       const angle = sessionId === this.room.sessionId ? aim : player.angle;
+      const alive = player.alive !== false;
       view.setPose(x, y, angle);
+      view.setAlive(alive);
       view.setHealth(player.hp, player.maxHp);
       view.setName(sanitizePlayerName(player.name));
       view.setWeapon(player.weaponId);
@@ -310,41 +357,56 @@ export class GameScene extends Phaser.Scene {
       const syncedHeld = isHeldSlot(player.held) ? player.held : "gun";
       view.setHeld(sessionId === this.room.sessionId ? this.held : syncedHeld);
 
-      if (sessionId === this.room.sessionId) {
+      if (sessionId !== this.room.sessionId) {
+        continue;
+      }
+
+      this.syncLocalOutcome(player, state);
+      if (!this.cameraFrozen) {
         this.cameras.main.centerOn(x, y);
-        const inventory = player.inventory ?? EMPTY_INVENTORY;
-        const weapon = getWeapon(player.weaponId);
-        this.hud.setHeld(this.held, this.held === "gun" ? formatWeaponStats(weapon) : "");
-        this.weaponMenu.setGun(weapon.id);
-        this.weaponMenu.setSelected(this.held);
-        this.weaponMenu.setArmor(
-          player.craftedHeavy ? "Heavy" : player.craftedLight ? "Light" : "None",
-          player.armor,
-          player.maxArmor,
-        );
-        this.hud.setVitals(player.hp, player.maxHp, player.armor, player.maxArmor, player.damage, player.wardMs ?? 0, player.hasteMs ?? 0);
-        this.hud.setInventory(inventory);
-        const hired = [...state.bots.values()].filter((bot) => bot.ownerId === sessionId).length;
-        this.craftMenu.refresh(inventory, {
-          craftedLight: player.craftedLight,
-          craftedHeavy: player.craftedHeavy,
-        }, player.weaponId, hired);
-        const near = nearestHarvestable(x, y, (id) => state.nodes.get(id)?.remaining ?? 0);
-        const armKey = HELD_SLOTS.indexOf("arm") + 1;
-        const payment = chooseWallPayment(inventory);
-        if (this.held === "wall") {
-          this.actors.showWallPreview(wallRectForAim(x, y, aim), payment?.material ?? "wood", payment !== undefined);
-          this.hud.setPrompt(payment
-            ? `Click to place a ${payment.material} barricade`
-            : `Need ${wallCostLabel()}`);
-        } else {
-          this.actors.showWallPreview(undefined);
-          this.hud.setPrompt(near
-            ? this.held === "arm"
-              ? `Click to gather ${HARVEST[near.kind].label}`
-              : `Select Arm (${armKey}) to gather ${HARVEST[near.kind].label}`
-            : "");
-        }
+      }
+      this.smokeWarning?.setVisible(alive && state.phase === MATCH_PLAYING && isInSmoke(x, y, state.zoneRadius));
+      if (!playing) {
+        this.actors.showWallPreview(undefined);
+        continue;
+      }
+
+      const inventory = player.inventory ?? EMPTY_INVENTORY;
+      const weapon = getWeapon(player.weaponId);
+      this.hud.setHeld(this.held, this.held === "gun" ? formatWeaponStats(weapon) : "");
+      this.weaponMenu.setGun(weapon.id);
+      this.weaponMenu.setSelected(this.held);
+      this.weaponMenu.setArmor(
+        player.craftedHeavy ? "Heavy" : player.craftedLight ? "Light" : "None",
+        player.armor,
+        player.maxArmor,
+      );
+      this.hud.setVitals(player.hp, player.maxHp, player.armor, player.maxArmor, player.damage, player.wardMs ?? 0, player.hasteMs ?? 0);
+      this.hud.setInventory(inventory);
+      const hired = [...state.bots.values()].filter((bot) => bot.ownerId === sessionId).length;
+      this.craftMenu.refresh(inventory, {
+        craftedLight: player.craftedLight,
+        craftedHeavy: player.craftedHeavy,
+      }, player.weaponId, hired);
+      const near = nearestHarvestable(x, y, (id) => state.nodes.get(id)?.remaining ?? 0);
+      const armKey = HELD_SLOTS.indexOf("arm") + 1;
+      const payment = chooseWallPayment(inventory);
+      const inSmoke = isInSmoke(x, y, state.zoneRadius);
+      if (inSmoke) {
+        this.actors.showWallPreview(undefined);
+        this.hud.setPrompt("You are in the smoke!");
+      } else if (this.held === "wall") {
+        this.actors.showWallPreview(wallRectForAim(x, y, aim), payment?.material ?? "wood", payment !== undefined);
+        this.hud.setPrompt(payment
+          ? `Click to place a ${payment.material} barricade`
+          : `Need ${wallCostLabel()}`);
+      } else {
+        this.actors.showWallPreview(undefined);
+        this.hud.setPrompt(near
+          ? this.held === "arm"
+            ? `Click to gather ${HARVEST[near.kind].label}`
+            : `Select Arm (${armKey}) to gather ${HARVEST[near.kind].label}`
+          : "");
       }
     }
   }
@@ -428,11 +490,71 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private leaveMatch(): void {
-    const leave = this.registry.get("onLeaveMatch");
-    if (typeof leave === "function") {
-      leave();
+  private canPlay(): boolean {
+    const phase = (this.room?.state as { phase?: string } | undefined)?.phase;
+    return phase === MATCH_PLAYING && this.localAlive && !this.results.isOpen();
+  }
+
+  private setPlayUi(visible: boolean): void {
+    if (this.playHudShown === visible) {
+      return;
     }
+    this.playHudShown = visible;
+    this.hud.setPlayVisible(visible);
+    this.weaponMenu.setVisible(visible);
+    if (!visible) {
+      this.craftMenu.close();
+    }
+  }
+
+  private syncLocalOutcome(player: SyncedPlayer, state: {
+    phase: string;
+    winnerId: string;
+    winnerName: string;
+    winnerKills: number;
+    matchTimeSec: number;
+    rosterSize: number;
+    players: Map<string, SyncedPlayer>;
+  }): void {
+    const sessionId = this.room?.sessionId ?? "";
+    if (player.alive === false && this.localAlive) {
+      this.localAlive = false;
+      this.cameraFrozen = true;
+      this.craftMenu.close();
+      this.results.showEliminated({
+        killerName: player.killerName ?? "",
+        placement: player.placement || state.players.size,
+        rosterSize: state.rosterSize || state.players.size,
+        kills: player.kills ?? 0,
+      });
+    }
+    if (!this.localAlive) {
+      this.results.setWinnerName(state.winnerName);
+    }
+    if (state.phase === MATCH_ENDED && state.winnerId === sessionId && player.alive !== false) {
+      this.results.showWinner({
+        name: sanitizePlayerName(player.name),
+        color: player.color,
+        kills: state.winnerKills || player.kills || 0,
+        survivalSec: state.matchTimeSec,
+      });
+    }
+  }
+
+  private leaveMatch(): void {
+    if (this.leaving) {
+      return;
+    }
+    this.leaving = true;
+    const room = this.room;
+    this.room = undefined;
+    const finish = (): void => {
+      const leave = this.registry.get("onLeaveMatch");
+      if (typeof leave === "function") {
+        leave();
+      }
+    };
+    void room?.leave().then(finish, finish);
   }
 
   private bindRoom(room: GameRoom): void {

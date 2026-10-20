@@ -61,6 +61,13 @@ export class WeaponMenu {
     this.pin(this.armorText);
     this.layout(scene.scale.width, scene.scale.height);
     this.setSelected("gun");
+    this.setVisible(false);
+  }
+
+  setVisible(visible: boolean): void {
+    for (const object of [...this.slots, ...this.labels, ...this.numbers, ...this.icons, this.armorChip, this.armorText]) {
+      object.setVisible(visible);
+    }
   }
 
   layout(width: number, height: number): void {
@@ -128,6 +135,9 @@ export class WeaponMenu {
   }
 
   hitSlot(x: number, y: number): HeldSlot | undefined {
+    if (!this.slots[0]?.visible) {
+      return undefined;
+    }
     const camera = this.scene.cameras.main;
     for (let index = 0; index < this.slots.length; index += 1) {
       const rect = this.slots[index];

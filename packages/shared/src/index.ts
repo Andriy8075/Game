@@ -10,6 +10,7 @@ export * from "./simulation/hitscan";
 export * from "./simulation/navigate";
 export * from "./simulation/walls";
 export * from "./simulation/spawns";
+export * from "./simulation/zone";
 export * from "./world/map";
 export * from "./weapons/catalog";
 export * from "./weapons/pickups";

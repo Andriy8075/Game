@@ -6,6 +6,23 @@ export const INTERP_DELAY_MS = 100;
 export const WORLD_WIDTH = 3200;
 export const WORLD_HEIGHT = 2400;
 
+export const MATCH_WAITING = "waiting";
+export const MATCH_COUNTDOWN = "countdown";
+export const MATCH_PLAYING = "playing";
+export const MATCH_ENDED = "ended";
+export const MATCH_PHASES = [MATCH_WAITING, MATCH_COUNTDOWN, MATCH_PLAYING, MATCH_ENDED] as const;
+export type MatchPhase = (typeof MATCH_PHASES)[number];
+
+export function isMatchPhase(value: string): value is MatchPhase {
+  return (MATCH_PHASES as readonly string[]).includes(value);
+}
+
+export const MIN_PLAYERS_TO_START = 2;
+export const COUNTDOWN_MS = 20_000;
+export const SMOKE_TICK_MS = 500;
+export const SMOKE_KILLER_ID = "smoke";
+export const SMOKE_KILLER_NAME = "the smoke";
+
 export const PLAYER_RADIUS = 18;
 export const PLAYER_SPEED = 180;
 export const PLAYER_MAX_HP = 100;

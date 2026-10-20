@@ -3,7 +3,6 @@ import { STARTER_WEAPON_ID, getWeapon, weaponsForSource, type WeaponDef, type We
 
 export const XP_PER_LEVEL = 100;
 export const XP_PER_KILL = 40;
-export const KILLS_TO_WIN = 10;
 
 const BONUS_CHANCE_CAP = 0.45;
 
@@ -54,7 +53,7 @@ export type JoinBonus = {
 /**
  * Independent rolls for a frag, a bandage, light armor, and a pickup gun.
  * The gun roll runs only when the menu choice is the Sidearm.
- * Level 0 (guests) never receives a bonus. The same roll is not repeated on respawn.
+ * Level 0 (guests) never receives a bonus. The same roll is not repeated after death.
  */
 export function rollJoinLoadout(level: number, random: () => number, menuWeaponId: string): JoinBonus {
   const chance = joinBonusChance(level);

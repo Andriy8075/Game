@@ -99,6 +99,10 @@ export class PlayerView {
     this.body.setRotation(angle);
   }
 
+  setAlive(alive: boolean): void {
+    this.root.setVisible(alive);
+  }
+
   setWeapon(weaponId: string): void {
     if (this.equippedId === weaponId) {
       return;
