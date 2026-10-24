@@ -11,12 +11,15 @@ A 2D battle royale shooter with a Phaser client and a Colyseus authoritative Nod
 
 ## Run locally
 
+Start Postgres first (accounts and persistence need it), then install and run the app:
+
 ```bash
+docker compose up -d
 npm install
-npm run dev
+npm server
 ```
 
-Then open two browser tabs at [http://localhost:5173](http://localhost:5173) and press Play in each. You land in a waiting room; the battle starts 20 seconds after the second player joins. The Colyseus server listens on `http://localhost:2567`.
+`docker compose up -d` uses [docker-compose.yml](./docker-compose.yml) to create the `io_shooter` database on port `5432`. Then open two browser tabs at [http://localhost:5173](http://localhost:5173) and press Play in each. You land in a waiting room; the battle starts 20 seconds after the second player joins. The Colyseus server listens on `http://localhost:2567`.
 
 ## Controls
 
@@ -39,6 +42,8 @@ The local player stays centered until they die. The map, obstacles, and other pl
 
 ## Scripts
 
+- `docker compose up -d` – Postgres via [docker-compose.yml](./docker-compose.yml)
+- `npm server` – start the app (after Postgres is up)
 - `npm run dev` – client and server together
 - `npm test` – shared simulation tests and room integration tests
 - `npm run typecheck` – TypeScript across workspaces
